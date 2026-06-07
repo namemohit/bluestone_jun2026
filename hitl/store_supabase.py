@@ -165,10 +165,12 @@ class SupabaseStore:
 
     def enroll_staff(self, employee_id: int, store_id: str, embedding, crop_url=None,
                      window=None, track=None) -> None:
+        # embedding may be a numpy array (float32) -> .tolist() gives JSON-safe python floats
+        emb_list = embedding.tolist() if hasattr(embedding, "tolist") else [float(x) for x in embedding]
         with self._cx() as cx, cx.cursor() as cur:
             cur.execute("insert into employee_gallery(employee_id,store_id,embedding,crop_url,source_window,source_track) "
                         "values(%s,%s,%s,%s,%s,%s)",
-                        (employee_id, store_id, json.dumps(list(embedding)), crop_url, window, track))
+                        (employee_id, store_id, json.dumps(emb_list), crop_url, window, track))
 
     def get_gallery(self, store_id: str = "s14") -> list[dict]:
         with self._cx() as cx, cx.cursor() as cur:
