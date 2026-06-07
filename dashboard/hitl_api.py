@@ -81,6 +81,14 @@ def _rerun_l4(window: str) -> None:
            "--out", str(_window_dir(window)), "--feedback", fb]
     if cfg.get("interior"):
         cmd += ["--interior", *cfg["interior"]]
+        try:  # hand L4 the enrolled-staff gallery so known staff auto-tag on every re-run
+            gal = store.get_gallery()
+            if gal:
+                galp = _window_dir(window) / "gallery.json"
+                galp.write_text(json.dumps(gal), encoding="utf-8")
+                cmd += ["--gallery", str(galp)]
+        except Exception:
+            pass
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         raise HTTPException(500, f"L4 re-run failed: {r.stderr[-400:]}")
@@ -114,6 +122,20 @@ def visits(window: str) -> dict:
                                         "tracks": [], "visit_ids": []})
             g["tracks"].append(l["in_track"])
             g["visit_ids"].append(l["visit_id"])
+    # merge gallery-recognised (auto) staff from the local L4 result (cloud read-only has no file)
+    try:
+        vj = OUTPUTS / window / "visits.json"
+        auto = json.loads(vj.read_text(encoding="utf-8")).get("staff", []) if vj.exists() else []
+    except Exception:
+        auto = []
+    for a in auto:
+        eid = a.get("employee_id")
+        g = groups.setdefault(eid, {"employee_id": eid, "code": (emp_map.get(eid) or {}).get("code"),
+                                    "name": (emp_map.get(eid) or {}).get("name"),
+                                    "tracks": [], "visit_ids": []})
+        if a["track"] not in g["tracks"]:
+            g["tracks"].append(a["track"])
+        g.setdefault("auto_tracks", []).append(a["track"])  # UI badges these as auto-recognised
     data["staff"] = sorted(groups.values(), key=lambda g: (g["employee_id"] or 0))
     # L2: every door ENTRY (matched-visit INs + still-open INs), by timestamp
     data["entries"] = sorted(

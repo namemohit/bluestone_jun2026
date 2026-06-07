@@ -92,11 +92,22 @@ def main() -> None:
     interior_dirs = [l1(c, n) for c, n in zip(args.interior_clips, names)]
 
     fb = out / "feedback.json"
+    gal = out / "gallery.json"
+    try:  # enrolled-staff gallery -> L4 auto-recognises known staff (needs DB; skip if local-only)
+        from hitl.store_supabase import SupabaseStore as _S
+        _g = _S(root=args.out_root).get_gallery(args.store)
+        if _g:
+            gal.write_text(json.dumps(_g), encoding="utf-8")
+            print(f"  gallery: {len(_g)} staff embeddings -> auto-recognition ON")
+    except Exception:
+        pass
     l4 = [*PY, "stack.l4_visits", "--l1", l1_entry, "--config", args.zones, "--out", str(out)]
     if interior_dirs:
         l4 += ["--interior", *interior_dirs]
     if fb.exists():
         l4 += ["--feedback", str(fb)]
+    if interior_dirs and gal.exists():
+        l4 += ["--gallery", str(gal)]
     sh(*l4)
 
     # window.json lets the dashboard re-run L4 on this hour when a human labels it

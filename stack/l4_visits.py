@@ -155,6 +155,14 @@ def main() -> None:
                          "--min-sim): reject a lone-candidate occupancy match if the exiting person "
                          "clearly isn't them (e.g. a pre-window exit coinciding with one inside). "
                          "Appearance vetoes occupancy whenever a crop is available.")
+    ap.add_argument("--gallery", default=None,
+                    help="staff gallery JSON [{employee_id, embedding:[512 floats]}]: a bridged "
+                         "interior track whose OSNet embedding matches an enrolled employee "
+                         "(cosine sim >= --staff-sim) is auto-tagged staff and dropped from "
+                         "customer visits -- cross-hour attendance with no re-marking. Needs --interior.")
+    ap.add_argument("--staff-sim", type=float, default=0.6,
+                    help="cosine-sim threshold for gallery auto-recognition (tune if a customer is "
+                         "mis-tagged or a known staffer is missed)")
     ap.add_argument("--out", default="outputs/L4_visits")
     args = ap.parse_args()
     try:
@@ -179,6 +187,7 @@ def main() -> None:
     cannot = {tuple(p) for p in feedback.get("cannot_link", [])}   # (in_track, out_track) forbidden
     must = {tuple(p) for p in feedback.get("must_link", [])}       # (in_track, out_track) forced
     employees = set(feedback.get("employees", []))                  # entry-cam tracks that are staff
+    gallery = json.load(open(args.gallery)) if (args.gallery and os.path.exists(args.gallery)) else []
 
     events = sorted(detect_events(L1, cfg), key=lambda e: e["ts"])
     # de-dup same-direction crossings within window (one fragmented person)
@@ -189,6 +198,7 @@ def main() -> None:
         if kept and e["dir"] == kept[-1]["dir"] and e["ts"] - kept[-1]["ts"] <= dedup_w:
             continue
         kept.append(e)
+    auto_staff = []  # gallery-recognised staff (source='auto'); dropped from customer visits below
     if args.interior:
         # v2: bridge each door event to its clean interior crop (OSNet-picked), match on those
         from stack.l5_bridge import load_interior
@@ -218,6 +228,26 @@ def main() -> None:
             e["present"] = best is not None
             e["emb"] = best["emb"] if best else None
             e["int_crop"] = best["crop"] if best else None
+        # auto-recognition: a bridged interior embedding matching an enrolled staffer (sim >= --staff-sim)
+        # is tagged staff and dropped from the customer matching below -- cross-hour attendance, no re-mark
+        if gallery:
+            gembs = [(g["employee_id"], np.asarray(g["embedding"], dtype="float32")) for g in gallery]
+            survivors = []
+            for e in kept:
+                eid, esim = None, args.staff_sim
+                if e.get("emb") is not None:
+                    for gid, gemb in gembs:
+                        gs = reid.osnet_sim(e["emb"], gemb)
+                        if gs >= esim:
+                            esim, eid = gs, gid
+                if eid is not None:
+                    auto_staff.append({"track": e["track"], "employee_id": eid,
+                                       "sim": round(float(esim), 3), "dir": e["dir"],
+                                       "ist": ist(e["ts"]), "source": "auto",
+                                       "crop": (e.get("int_crop") or e["crop"]).replace("\\", "/")})
+                else:
+                    survivors.append(e)
+            kept = survivors
     else:
         for e in kept:
             e["emb"] = embed_fn(cv2.imread(e["crop"]))
@@ -294,7 +324,8 @@ def main() -> None:
         "feedback_applied": {"cannot_link": len(cannot), "must_link": len(must),
                              "employees": len(employees)},
         "counts": {"visits": len(visits), "still_inside": len(still_inside),
-                   "pre_window_exits": len(unmatched_out), "peak_occupancy": peak},
+                   "pre_window_exits": len(unmatched_out), "peak_occupancy": peak,
+                   "auto_staff": len(auto_staff)},
         "visits": [{"id": v["id"], "in_track": v["in_track"], "out_track": v["out_track"],
                     "in_ist": ist(v["in"]), "out_ist": ist(v["out"]),
                     "dwell_s": round(v["dwell"], 1), "how": v["how"],
@@ -311,6 +342,8 @@ def main() -> None:
         "pre_window_exits": [{"track": e["track"], "ist": ist(e["ts"]),
                               "crop": (e.get("int_crop") or e["crop"]).replace("\\", "/")}
                              for e in sorted(unmatched_out, key=lambda z: z["ts"])],
+        # gallery-recognised staff this window (employee_id set) -> attendance, no manual click
+        "staff": sorted(auto_staff, key=lambda z: z["ist"]),
     }
     with open(os.path.join(args.out, "visits.json"), "w", encoding="utf-8") as f:
         json.dump(visits_json, f, indent=2)
@@ -321,6 +354,8 @@ def main() -> None:
     fb_n = len(cannot) + len(must) + len(employees)
     if fb_n:
         print(f"  feedback applied: {len(cannot)} crosses, {len(must)} confirms, {len(employees)} staff")
+    if gallery:
+        print(f"  auto-recognised staff (gallery sim>={args.staff_sim:g}, {len(gallery)} embeddings): {len(auto_staff)}")
     print(f"  completed visits (in+out paired): {len(visits)}")
     if dwell_list:
         print(f"  dwell  mean {np.mean(dwell_list)/60:.1f} min  |  median {np.median(dwell_list)/60:.1f} min "
