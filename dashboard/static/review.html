@@ -104,8 +104,10 @@
   <div class="mini" id="open"></div>
   <h2>Exited but entered before the window</h2>
   <div class="mini" id="pre"></div>
-  <h2>Marked as staff — hidden from customer counts (click ↩ to undo)</h2>
+  <h2>Staff this window — hidden from customer counts · ✋ marked or 🤖 auto-recognised (↩ to undo)</h2>
   <div class="mini staffrow" id="staff"></div>
+  <h2>👥 Attendance — each staffer's time in / out across the day (auto-tracked once enrolled)</h2>
+  <div class="mini" id="attendance"></div>
   <h2 id="detsHead">All detections — everyone the cameras saw, door + interior (L1)</h2>
   <div class="mini" id="dets"></div>
   <p class="hint" style="margin-top:24px">Tip: click one “still inside” + one “pre-window exit” to link them into a recovered visit. Every action can be undone.</p>
@@ -187,10 +189,14 @@ async function load(){
   $('#pre').innerHTML  = (d.pre_window_exits||[]).map(e=>evHTML('pre',e)).join('') || '<p class="empty">none</p>';
   $('#staff').innerHTML = (d.staff||[]).map(g=>{
       const lab = g.employee_id ? `${g.code||('S'+g.employee_id)}${g.name?' · '+g.name:''}` : 'unassigned';
+      const auto = g.auto_tracks||[];
       const act = RO ? '' : (g.employee_id ? `<button onclick="renameStaff(${g.employee_id})">✎ name</button> ` : '')
                           + `<button onclick="unstaffGroup('${(g.visit_ids||[]).join('|')}')">↩</button>`;
-      return `<div class="ev" style="width:auto;min-width:140px"><div class="lb"><b>${lab}</b><br>${g.tracks.length}×: ${g.tracks.map(t=>'#'+t).join(' ')}</div>${act}</div>`;
+      const tracks = g.tracks.map(t=>'#'+t+(auto.includes(t)?'🤖':'')).join(' ');
+      const badge = auto.length ? ' <span class="autob">🤖 auto</span>' : '';
+      return `<div class="ev" style="width:auto;min-width:140px"><div class="lb"><b>${lab}</b>${badge}<br>${g.tracks.length}×: ${tracks}</div>${act}</div>`;
     }).join('') || '<p class="empty">none — click 👤 on a visit/person to assign them</p>';
+  loadAttendance();
   $('#entries').innerHTML = (d.entries||[]).map(entryHTML).join('') || '<p class="empty">no door entries yet in this window</p>';
   renderLinkbar();
   // L1 — all raw detections (separate, heavier fetch)
@@ -198,6 +204,16 @@ async function load(){
   const ds = dets.detections||[];
   $('#detsHead').textContent = `All detections — everyone the cameras saw, door + interior (L1) · ${ds.length}`;
   $('#dets').innerHTML = ds.map(detHTML).join('') || '<p class="empty">none</p>';
+}
+async function loadAttendance(){
+  const date = (WIN||'').split('_')[0] || '';
+  const r = await fetch('/api/hitl/attendance'+(date?('?date='+date):'')).then(r=>r.json()).catch(()=>({attendance:[]}));
+  const a = r.attendance||[];
+  const t = x => { if(!x) return '—'; const s=String(x); return s.length>=19 ? s.slice(11,19) : s; };
+  $('#attendance').innerHTML = a.map(e=>{
+    const span = (e.first_seen||e.last_seen) ? `${t(e.first_seen)} → ${t(e.last_seen)}` : '—';
+    return `<div class="ev" style="width:auto;min-width:175px"><div class="lb"><b>${e.code||('S'+e.id)}${e.name?' · '+e.name:''}</b><br>in/out: ${span}<br>${e.sightings||0} sightings · ${e.windows||0} window(s)</div></div>`;
+  }).join('') || '<p class="empty">no staff enrolled yet — mark someone 👤 Staff to start tracking attendance</p>';
 }
 function entryHTML(e){
   return `<div class="ev">${cropImg(e.crop)}<div class="lb">${e.ist}<br>#${e.track} ${e.matched?'· visit':''}</div></div>`;

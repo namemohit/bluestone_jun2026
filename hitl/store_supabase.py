@@ -106,6 +106,29 @@ class SupabaseStore:
                         "do update set role=excluded.role, crop_url=excluded.crop_url",
                         (window, e["track"], "in" if role == "open" else "out",
                          self._full_ts(date, e["ist"]), crop(e["crop"]), role))
+            # detections (L1 raw, every camera) — regenerable snapshot for the detections view +
+            # attendance (staff in_track -> first/last sighting). Read from the window's local L1 dirs.
+            cur.execute("delete from detections where window_id=%s", (window,))
+            wj = self.root / window / "window.json"
+            if wj.exists():
+                wcfg = json.loads(wj.read_text(encoding="utf-8"))
+                ddirs = [(wcfg.get("l1"), "C05")] + [(d, pathlib.Path(d).name.replace("L1_", ""))
+                                                     for d in wcfg.get("interior", [])]
+                rows = []
+                for dd, cam in ddirs:
+                    tj = pathlib.Path(dd) / "tracks.json" if dd else None
+                    if not tj or not tj.exists():
+                        continue
+                    for t in json.loads(tj.read_text(encoding="utf-8")).get("tracks", []):
+                        rows.append((window, cam, t["track"],
+                                     self._full_ts(date, t.get("first_ist", "")),
+                                     self._full_ts(date, t.get("last_ist") or t.get("first_ist", "")),
+                                     round(t.get("last_ts", 0) - t.get("first_ts", 0), 1),
+                                     t.get("frames"), (t.get("crop", "") or "").replace("\\", "/")))
+                if rows:
+                    cur.executemany(
+                        "insert into detections(window_id,camera,track,first_ist,last_ist,dur_s,frames,crop_url) "
+                        "values(%s,%s,%s,%s,%s,%s,%s,%s)", rows)
 
     # ---- reads (same shape as LocalStore) -------------------------------
     def get_visits(self, window: str) -> dict:
