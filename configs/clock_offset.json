@@ -1,0 +1,19 @@
+{
+  "_README": "CRITICAL: This NVR's burned-in OSD timestamps are NOT real IST. The clock was hand-set to UTC and runs ~8 min slow, with NTP disabled (timeMode=manual). All recorded timestamps run ~5h38m BEHIND true IST. To request footage for a desired real-IST time T, use RTSP starttime = T - true_ist_minus_osd_seconds. After processing, add the same offset back to convert OSD media time -> real IST for reporting.",
+  "nvr": "NVR 2",
+  "osd_clock_is_utc": true,
+  "true_ist_minus_osd_seconds": 20315,
+  "offset_hms": "5h38m35s",
+  "measured_on": "2026-06-07",
+  "measurement": "NVR ISAPI /System/time = 2026-06-07T10:19:18 ; external-verified true IST = 15:57:53",
+  "verified_visually": {
+    "osd_12:30": "store OPEN, staff inside, evening daylight  => ~18:08 IST",
+    "osd_18:00": "security shutter DOWN, store closed         => ~23:38 IST"
+  },
+  "ist_to_osd_examples": {
+    "10:00:00 IST (day open target)": "OSD 04:21:25",
+    "18:00:00 IST (6 PM validation)": "OSD 12:21:25",
+    "22:00:00 IST (day close target)": "OSD 16:21:25"
+  },
+  "action_item": "Showroom should set NVR clock to IST and enable NTP so future recordings are correctly stamped. Does NOT affect already-recorded Jun-3 footage (offset is applied in software)."
+}

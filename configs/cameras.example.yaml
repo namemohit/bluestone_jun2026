@@ -1,0 +1,78 @@
+# Showroom tracker — camera + pipeline config (EXAMPLE).
+# Copy to configs/cameras.yaml and fill in real values. cameras.yaml is git-ignored.
+# Never commit credentials — prefer ${ENV_VAR} placeholders (expanded at load time).
+
+site:
+  name: "BlueStone Showroom"
+  timezone: "Asia/Kolkata"
+
+# NVR connection. ingest/nvr.py builds per-channel RTSP URLs from this for known brands.
+# SECURITY: prefer a VPN/secure tunnel to the NVR over a raw public port-forward.
+nvr:
+  brand: hikvision          # hikvision | dahua | generic
+  host: "127.0.0.1"         # public host or tunnel endpoint
+  rtsp_port: 554
+  username: "admin"
+  password: "${NVR_PASSWORD}"   # set NVR_PASSWORD in the environment; do NOT hardcode
+  # For brand=generic, set `source` on each camera with a full rtsp:// URL instead.
+
+cameras:
+  - id: cam_entry
+    role: entry             # entry | exit | common
+    channel: 1              # NVR channel number
+    stream: main            # main | sub
+    source: null            # optional override: a file path or full rtsp:// URL
+    fps_sample: 8           # process this many fps (downsampled from native)
+    counting_lines:
+      - id: door_line
+        # points in NORMALIZED [0,1] image coords (resolution-independent)
+        points: [[0.15, 0.55], [0.85, 0.55]]
+        inside: left        # which side of the directed P1->P2 line is "inside" the store
+    rois: []
+
+  - id: cam_exit
+    role: exit
+    channel: 2
+    stream: main
+    source: null
+    fps_sample: 8
+    counting_lines:
+      - id: exit_line
+        points: [[0.10, 0.60], [0.90, 0.60]]
+        inside: left
+    rois: []
+
+  - id: cam_side
+    role: common            # bridges entry/exit for cross-camera fusion; covers interior dwell
+    channel: 3
+    stream: main
+    source: null
+    fps_sample: 8
+    counting_lines: []      # common cams typically aren't a primary counting boundary
+    rois: []
+
+detector:
+  backend: yolo             # yolo | synthetic  (synthetic needs no model/GPU)
+  weights: yolo11n.pt       # auto-downloaded by ultralytics on first run
+  conf: 0.35
+  iou: 0.5
+  classes: [0]              # COCO 'person'
+  device: null              # null=auto, "cpu", 0, "0,1"
+  imgsz: 960
+  tracker: botsort.yaml     # ultralytics tracker (BoT-SORT, appearance-aware)
+
+counting:
+  track_point: bottom_center  # bottom_center (feet, best for ground crossing) | center
+  min_track_len: 3            # ignore tracks shorter than N updates (jitter guard)
+  reentry_window_sec: 3600    # window for unique-person dedup (footfall vs unique KPI)
+
+sessions:
+  window_sec: 7200            # exit↔entry match window (max plausible dwell + buffer)
+  match_threshold: 0.80       # cosine ≥ this → auto-match (close session + record dwell)
+  review_threshold: 0.60      # cosine in [review, match) → matched but flagged for HITL
+  employee_threshold: 0.70    # cosine ≥ this vs enrolled employee gallery → tagged employee
+  embedder: stub              # stub (GPU-free demo) | reid (CLIP-ReID/OSNet)
+
+storage:
+  enabled: false              # true requires Postgres+pgvector (see storage/docker-compose.yml)
+  dsn: "postgresql://tracker:tracker@localhost:5432/showroom"

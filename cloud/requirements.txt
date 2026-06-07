@@ -1,0 +1,12 @@
+# Slim deps for the Cloud Run stack job (L1-L5 + OSNet). Torch/torchvision come from the
+# pytorch base image. Demographics (insightface/onnxruntime) + DB/dashboard deps are added
+# later when those layers go cloud-side.
+numpy>=1.26,<3
+opencv-python-headless>=4.9
+PyYAML>=6.0
+requests>=2.31
+tzdata>=2024.1
+ultralytics>=8.3,<9
+boxmot==19.0.0
+gdown
+google-cloud-storage>=2.10

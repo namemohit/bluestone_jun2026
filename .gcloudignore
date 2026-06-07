@@ -1,0 +1,20 @@
+# Keep the Cloud Build upload tiny — only the dashboard code is needed.
+.venv/
+venv/
+data/
+outputs/
+*.ts
+*.mp4
+*.avi
+*.mkv
+*.pt
+*.onnx
+*.engine
+*.pkl
+__pycache__/
+*.py[cod]
+.git/
+.env
+configs/nvr.json
+configs/supabase.json
+cloud/dashboard.env.yaml

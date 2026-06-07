@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Showroom Vision Console</title>
+<style>
+  :root{
+    --bg:#f4f6f9; --surface:#ffffff; --ink:#0f1729; --mut:#64748b; --line:#e6e9ef;
+    --primary:#2563eb; --primary-soft:#eaf0fe; --accent:#10b981; --warn:#f59e0b;
+    --bad:#ef4444; --good:#16a34a; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;}
+  .app{display:grid;grid-template-columns:212px 1fr;min-height:100vh}
+  /* sidebar */
+  .side{background:var(--surface);border-right:1px solid var(--line);padding:16px 12px;display:flex;flex-direction:column}
+  .brand{display:flex;align-items:center;gap:9px;padding:4px 8px 14px}
+  .logo{width:26px;height:26px;border:2px solid var(--primary);border-radius:6px;position:relative}
+  .logo::before,.logo::after{content:"";position:absolute;width:7px;height:7px;border:2px solid var(--accent)}
+  .logo::before{top:-2px;left:-2px;border-right:0;border-bottom:0}
+  .logo::after{bottom:-2px;right:-2px;border-left:0;border-top:0}
+  .brand b{font-size:14px;letter-spacing:.2px} .brand span{display:block;font-size:11px;color:var(--mut)}
+  .nav{display:flex;flex-direction:column;gap:3px;margin-top:6px}
+  .nav a{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:8px;color:var(--mut);
+    text-decoration:none;font-weight:600;font-size:13.5px;cursor:pointer;border-left:3px solid transparent}
+  .nav a:hover{background:#f8fafc;color:var(--ink)}
+  .nav a.active{background:var(--primary-soft);color:var(--primary);border-left-color:var(--primary)}
+  .nav a .ic{width:16px;text-align:center}
+  .side .foot{margin-top:auto;padding:10px 8px 2px;border-top:1px solid var(--line);font-size:12px;color:var(--mut)}
+  /* main */
+  .main{padding:0 26px 40px}
+  .top{position:sticky;top:0;background:var(--bg);display:flex;align-items:center;gap:12px;padding:18px 0 14px;z-index:5}
+  .top h1{margin:0;font-size:18px;font-weight:700}
+  .top .sub{color:var(--mut);font-size:12.5px}
+  .top .right{margin-left:auto;display:flex;gap:9px;align-items:center}
+  .pill{display:inline-flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--line);
+    border-radius:999px;padding:5px 11px;font-weight:600;font-size:12.5px}
+  .pill .dot{width:8px;height:8px;border-radius:50%}
+  .pill b{font-family:var(--mono)}
+  .btn{cursor:pointer;border:1px solid var(--line);background:var(--surface);color:var(--ink);
+    border-radius:8px;padding:8px 13px;font-weight:600;font-size:13px}
+  .btn:hover{border-color:#cfd6e2}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+  .btn.primary:hover{background:#1d4ed8}
+  .btn.ghost{background:transparent}
+  /* cards / panels */
+  .grid{display:grid;gap:14px}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .panel h2{font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--mut);margin:0 0 12px;font-weight:700}
+  .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:16px}
+  .kpi{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:13px 14px;position:relative;overflow:hidden}
+  .kpi::after{content:"";position:absolute;top:8px;right:8px;width:10px;height:10px;border-top:2px solid var(--accent);border-right:2px solid var(--accent)}
+  .kpi .n{font-size:25px;font-weight:750;font-family:var(--mono)} .kpi .l{color:var(--mut);font-size:11.5px;margin-top:3px}
+  .subtabs{display:flex;gap:7px;margin:2px 0 12px}
+  .subtab{padding:6px 13px;border-radius:8px;border:1px solid var(--line);background:var(--surface);
+    color:var(--mut);font-weight:600;cursor:pointer;font-size:13px}
+  .subtab.active{background:var(--ink);border-color:var(--ink);color:#fff}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:8px 9px;border-bottom:1px solid var(--line)} th{color:var(--mut);font-weight:600;font-size:12px}
+  td.num,th.num{font-family:var(--mono)}
+  .bars{display:flex;flex-direction:column;gap:7px;margin-top:8px}
+  .bar{display:flex;align-items:center;gap:9px}.bar .lab{width:72px;color:var(--mut);font-size:12.5px}
+  .bar .track{flex:1;height:9px;background:#eef1f6;border-radius:6px;overflow:hidden}
+  .bar .fill{height:100%;background:var(--primary)} .bar .v{width:24px;text-align:right;font-family:var(--mono);font-size:12.5px}
+  /* review cards */
+  .rcard{display:flex;gap:14px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:13px 14px;margin-bottom:11px}
+  .rcard .thumb{flex:0 0 64px}
+  .rcard .body{flex:1;min-width:0}
+  .rtop{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .chip{font-size:10px;text-transform:uppercase;letter-spacing:.5px;padding:2px 8px;border-radius:6px;font-weight:700}
+  .chip.employee{background:#fff3e0;color:#c2620a} .chip.demographics{background:#e8f0fe;color:#1d4ed8}
+  .chip.group{background:#eef2f6;color:#475569}
+  .rtitle{font-weight:650} .rconf{margin-left:auto;color:var(--mut);font-size:12px;display:flex;align-items:center;gap:6px}
+  .rconf .track{width:54px;height:6px;background:#eef1f6;border-radius:4px;overflow:hidden}.rconf .fill{height:100%;background:var(--warn)}
+  .pred{font-size:12.5px;color:var(--mut);margin-bottom:9px}.pred b{color:var(--ink);font-weight:600}
+  .ctl{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .seg button{border:0;background:var(--surface);padding:6px 12px;cursor:pointer;font-weight:600;font-size:13px;color:var(--mut)}
+  .seg button.on{background:var(--primary);color:#fff}
+  .field{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--mut)}
+  select{border:1px solid var(--line);border-radius:8px;padding:6px 9px;font:inherit;background:var(--surface);color:var(--ink)}
+  .save{align-self:flex-start}
+  .muted{color:var(--mut)} .empty{color:var(--mut);font-style:italic;padding:10px 2px}
+  /* pipeline */
+  .pstep{border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:12px;background:var(--surface)}
+  .pstep .h{display:flex;align-items:center;gap:9px;margin-bottom:3px}.pstep .h b{font-size:14px}
+  .pstep .d{color:var(--mut);font-size:12.5px;margin-bottom:12px}
+  .tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:2px 7px;border-radius:5px}
+  .tag.live{background:#e7f8f0;color:#0b8a55} .tag.cfg{background:#eef1f6;color:#64748b}
+  .prow{display:grid;grid-template-columns:150px 1fr 60px;align-items:center;gap:12px;padding:7px 0}
+  .prow label{font-size:13px;color:#334155}
+  input[type=range]{width:100%;accent-color:var(--primary)}
+  .pval{font-family:var(--mono);font-size:13px;text-align:right}
+  /* training */
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .ctrlrow{display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line)}
+  .ctrlrow:last-child{border-bottom:0}
+  .switch{position:relative;width:42px;height:23px;background:#cbd5e1;border-radius:999px;cursor:pointer;transition:.15s}
+  .switch.on{background:var(--good)} .switch .k{position:absolute;top:2px;left:2px;width:19px;height:19px;background:#fff;border-radius:50%;transition:.15s}
+  .switch.on .k{left:21px}
+  .banner{border-radius:10px;padding:11px 14px;font-weight:600;margin-top:12px}
+  .banner.ok{background:#e9f9ef;color:#0b7a3b;border:1px solid #b7ebc9}
+  .banner.no{background:#fdecec;color:#b42318;border:1px solid #f6cecb}
+  .ok{color:var(--good)} .no{color:var(--bad)}
+  .note{font-size:12.5px;color:var(--mut);line-height:1.6}
+  .pendpill{font-family:var(--mono);font-size:12px;background:#eef2f6;border-radius:6px;padding:2px 7px}
+  .pendpill.hot{background:#fff3e0;color:#c2620a}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><div class="logo"></div><div><b>Vision Console</b><span>BlueStone Showroom</span></div></div>
+    <nav class="nav" id="nav">
+      <a data-v="overview" class="active"><span class="ic">▦</span> Overview</a>
+      <a data-v="review"><span class="ic">✓</span> Review <span id="navq"></span></a>
+      <a data-v="pipeline"><span class="ic">⚙</span> Pipeline</a>
+      <a data-v="training"><span class="ic">◴</span> Training</a>
+      <a data-v="sources"><span class="ic">⛁</span> Sources</a>
+    </nav>
+    <div class="foot">Batch · next-morning review<br>human-in-the-loop</div>
+  </aside>
+
+  <main class="main">
+    <div class="top">
+      <div><h1 id="ptitle">Overview</h1><div class="sub" id="psub">Day report</div></div>
+      <div class="right">
+        <span class="pill">model <b id="ver">v1</b></span>
+        <span class="pill"><span class="dot" id="dot"></span>accuracy <b id="score">—</b></span>
+        <button class="btn ghost" onclick="reset()">Reset</button>
+      </div>
+    </div>
+    <div id="view"></div>
+  </main>
+</div>
+
+<script>
+let S=null, VIEW='overview', SUB='cust', CV={}, SRC=null;
+const $=id=>document.getElementById(id);
+const api=(p,b)=>fetch(p,b?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}:undefined).then(r=>r.json());
+const PAL=['#2563eb','#0ea5e9','#8b5cf6','#10b981','#f59e0b','#ef4444','#14b8a6','#ec4899'];
+const hash=s=>{s=String(s);let h=0;for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return h;};
+
+function thumb(seed,tag){
+  const c=PAL[hash(seed)%PAL.length];
+  return `<svg width="64" height="64" viewBox="0 0 64 64">
+    <rect x="1" y="1" width="62" height="62" rx="9" fill="#f8fafc" stroke="#e6e9ef"/>
+    <circle cx="32" cy="26" r="9" fill="${c}"/>
+    <path d="M16 52c0-9 7-15 16-15s16 6 16 15z" fill="${c}"/>
+    <g stroke="${c}" stroke-width="2" fill="none" opacity=".9">
+      <path d="M8 16V8h8"/><path d="M56 16V8h-8"/><path d="M8 48v8h8"/><path d="M56 48v8h-8"/></g>
+    <rect x="2" y="48" width="60" height="14" rx="0" fill="rgba(15,23,41,.65)"/>
+    <text x="32" y="58" fill="#fff" font-size="9" font-family="monospace" text-anchor="middle">${tag}</text>
+  </svg>`;
+}
+function bars(obj,color){const t=Object.values(obj).reduce((a,b)=>a+b,0)||1;
+  return '<div class="bars">'+Object.entries(obj).map(([k,v])=>
+   `<div class="bar"><span class="lab">${k}</span><div class="track"><div class="fill" style="width:${100*v/t}%;background:${color||'var(--primary)'}"></div></div><span class="v">${v}</span></div>`).join('')+'</div>';}
+
+function topbar(){
+  $('ver').textContent='v'+(S.active_version||1);
+  $('score').textContent=S.score+'%';
+  $('dot').style.background=S.score>=95?'var(--good)':S.score>=50?'var(--warn)':'var(--bad)';
+  $('navq').innerHTML=S.cards.length?`<span class="pendpill hot" style="margin-left:auto">${S.cards.length}</span>`:'';
+  const titles={overview:['Overview','Day report — customers & employees'],review:['Review queue','Affirm or correct flagged visits'],
+    pipeline:['Pipeline','Tune model parameters at each step'],training:['Training','Schedule, controls & model registry'],
+    sources:['Sources','Connect the showroom NVR & cameras']};
+  $('ptitle').textContent=titles[VIEW][0]; $('psub').textContent=titles[VIEW][1];
+  document.querySelectorAll('#nav a').forEach(a=>a.classList.toggle('active',a.dataset.v===VIEW));
+}
+function go(v){ if(v==='sources') return openSources(); VIEW=v;render(); }
+async function openSources(){ SRC=await api('/api/sources'); VIEW='sources'; render(); }
+
+function render(){
+  topbar();
+  if(VIEW==='overview') return renderOverview();
+  if(VIEW==='review') return renderReview();
+  if(VIEW==='pipeline') return renderPipeline();
+  if(VIEW==='training') return renderTraining();
+  if(VIEW==='sources') return renderSources();
+}
+
+function renderOverview(){
+  const c=S.report.customers,e=S.report.employees;
+  const kpi=(n,l)=>`<div class="kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`;
+  let h=`<div class="kpis">${kpi(c.unique_customers,'Unique customers')}${kpi(c.groups.count,'Groups')}${kpi(e.headcount,'Employees')}${kpi(c.dwell_sec.mean??'—','Avg dwell (s)')}${kpi(S.report.review_queue.needs_review,'Needs review')}${kpi(S.applied_labels,'Human labels')}</div>`;
+  h+=`<div class="panel"><div class="subtabs"><div class="subtab ${SUB==='cust'?'active':''}" onclick="SUB='cust';render()">Customers</div><div class="subtab ${SUB==='emp'?'active':''}" onclick="SUB='emp';render()">Employees</div></div>`;
+  if(SUB==='cust'){
+    h+=`<table><tr><th>Metric</th><th>Value</th></tr>
+      <tr><td>Unique customers</td><td class="num">${c.unique_customers}</td></tr>
+      <tr><td>Groups (sizes)</td><td class="num">${c.groups.count} &nbsp;[${c.groups.sizes.join(', ')}]</td></tr>
+      <tr><td>Dwell mean / median</td><td class="num">${c.dwell_sec.mean??'—'} / ${c.dwell_sec.median??'—'} s</td></tr></table>
+      <div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:22px">
+      <div><b>Gender</b>${bars(c.demographics.gender,'#2563eb')}</div>
+      <div><b>Age</b>${bars(c.demographics.age_bucket,'#8b5cf6')}</div></div>`;
+  } else {
+    const rows=Object.values(e.timesheets).map(t=>`<tr><td>${t.name?t.name+' <span class="muted">#'+t.employee_id+'</span>':'#'+t.employee_id}</td><td class="num">${t.sessions}</td><td class="num">${t.time_inside_sec}</td><td class="num">${t.time_outside_sec??'—'}</td></tr>`).join('')||'<tr><td colspan=4 class="empty">No employees identified yet</td></tr>';
+    h+=`<table><tr><th>Employee</th><th class="num">Sessions</th><th class="num">Inside (s)</th><th class="num">Outside (s)</th></tr>${rows}</table>`;
+  }
+  h+=`</div>`; $('view').innerHTML=h;
+}
+
+function renderReview(){
+  let h=`<div class="panel"><div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+    <h2 style="margin:0">Queue · ${S.cards.length} to review</h2>
+    <button class="btn" style="margin-left:auto" onclick="acceptAll()">Accept all suggested</button>
+    <button class="btn primary" onclick="go('training')">Go to Training →</button></div>`;
+  if(!S.cards.length){h+=`<div class="empty">Queue clear — model agrees with the reviewer ✓</div></div>`;$('view').innerHTML=h;return;}
+  S.cards.forEach(card=>{ if(!CV[card.id]){ const sug=JSON.parse(JSON.stringify(card.control.suggested));
+    if(card.kind==='employee'){ const dir=S.employees||{}; sug.__new=!dir[sug.employee_id]; sug.name=dir[sug.employee_id]||''; }
+    CV[card.id]=sug; } });
+  h+=S.cards.map(card=>{
+    let ctl='';
+    const v=CV[card.id], k=card.kind;
+    if(k==='employee'){
+      const isEmp=v.is_employee!==false;
+      const dir=S.employees||{};
+      const ids=[...new Set([...Object.keys(dir).map(Number), ...card.control.employee_options])];
+      let opts=ids.map(o=>`<option value="${o}" ${(!v.__new&&o===v.employee_id)?'selected':''}>${dir[o]?dir[o]+' (#'+o+')':'#'+o}</option>`).join('');
+      opts+=`<option value="__new__" ${v.__new?'selected':''}>➕ Add new…</option>`;
+      ctl=`<div class="seg"><button class="${!isEmp?'on':''}" onclick="setCV('${card.id}','is_employee',false)">Customer</button>
+        <button class="${isEmp?'on':''}" onclick="setCV('${card.id}','is_employee',true)">Employee</button></div>`;
+      if(isEmp){
+        ctl+=`<div class="field">name <select onchange="setEmp('${card.id}',this.value)">${opts}</select></div>`;
+        if(v.__new) ctl+=`<input type="text" placeholder="Type employee name" value="${v.name||''}"
+          oninput="CV['${card.id}'].name=this.value" style="padding:6px 9px;border:1px solid var(--line);border-radius:8px;min-width:170px">`;
+      }
+    } else if(k==='demographics'){
+      const go=card.control.gender_options,ao=card.control.age_options;
+      ctl=`<div class="field">gender <div class="seg">${go.map(o=>`<button class="${v.gender===o?'on':''}" onclick="setCV('${card.id}','gender','${o}')">${o}</button>`).join('')}</div></div>
+        <div class="field">age <select onchange="setCV('${card.id}','age_bucket',this.value)">${ao.map(o=>`<option ${v.age_bucket===o?'selected':''}>${o}</option>`).join('')}</select></div>`;
+    } else {
+      ctl=`<div class="field">confirm <b>${card.control.suggested.groups}</b> groups</div>`;
+    }
+    return `<div class="rcard"><div class="thumb">${thumb(card.thumb.seed,card.thumb.tag)}</div>
+      <div class="body"><div class="rtop"><span class="chip ${k}">${k}</span><span class="rtitle">${card.title}</span>
+        <span class="rconf">conf <div class="track"><div class="fill" style="width:${Math.round(card.confidence*100)}%"></div></div></span></div>
+      <div class="pred">predicted: <b>${card.prediction_label}</b></div>
+      <div class="ctl">${ctl}</div>
+      <button class="btn primary save" onclick="saveCard('${card.id}')">Save label</button></div></div>`;
+  }).join('');
+  h+=`</div>`; $('view').innerHTML=h;
+}
+function setCV(id,k,val){CV[id][k]=val;render();}
+function setEmp(id,val){const v=CV[id]; if(val==='__new__'){v.__new=true;} else {v.__new=false;v.employee_id=+val;v.name=(S.employees||{})[+val]||'';} render();}
+async function saveCard(id){await api('/api/correct',{id,value:CV[id]});delete CV[id];await refresh();}
+async function acceptAll(){for(const c of S.cards){await api('/api/correct',{id:c.id,value:c.control.suggested});}CV={};await refresh();}
+
+function renderPipeline(){
+  let h='';
+  S.params.forEach(step=>{
+    h+=`<div class="pstep"><div class="h"><b>${step.step}</b></div><div class="d">${step.desc}</div>`;
+    step.fields.forEach(f=>{
+      const tag=f.live?'<span class="tag live">live</span>':'<span class="tag cfg">config</span>';
+      h+=`<div class="prow"><label>${f.label} ${tag}</label>
+        <input type="range" min="${f.min}" max="${f.max}" step="${f.step}" value="${f.value}"
+          oninput="this.nextElementSibling.textContent=(+this.value).toFixed(2)"
+          onchange="setParam('${f.key}',+this.value)">
+        <div class="pval">${(+f.value).toFixed(2)}</div></div>`;
+    });
+    h+=`</div>`;
+  });
+  $('view').innerHTML=`<div class="panel"><h2>Per-step parameters</h2><div class="note" style="margin-bottom:12px">
+    <span class="tag live">live</span> params re-run the day immediately (watch Overview/accuracy change).
+    <span class="tag cfg">config</span> params apply when running real footage.</div>${h}</div>`;
+}
+async function setParam(key,val){S=await api('/api/params',{patch:{[key]:val}});topbar();}
+
+function renderTraining(){
+  const t=S.training,set=t.settings,lr=t.last_result;
+  const sw=(on,fn)=>`<div class="switch ${on?'on':''}" onclick="${fn}"><div class="k"></div></div>`;
+  let models=t.models.map(m=>`<tr><td>${m.name}</td><td class="muted">${m.method}</td><td><span class="pendpill ${m.pending?'hot':''}">${m.pending} pending</span></td></tr>`).join('');
+  let reg=t.registry.map(r=>`<tr><td class="num">v${r.version}</td><td class="num">${r.score}%</td>
+    <td>${r.active?'<span class="ok">● active</span>':`<button class="btn" onclick="promote(${r.version})">Promote</button>`}</td></tr>`).join('');
+  let banner='';
+  if(lr){const cls=lr.promoted?'ok':'no';
+    const msg=lr.promoted?`PROMOTED to v${lr.active_version}`:(lr.eligible?`passed gate — awaiting approval (auto-promote off)`:`REJECTED by gate`);
+    banner=`<div class="banner ${lr.promoted?'ok':'no'}">Retrain: ${lr.before}% → ${lr.after}% — ${msg}</div>`;}
+  $('view').innerHTML=`
+   <div class="two">
+    <div class="panel"><h2>Training controls</h2>
+      <div class="ctrlrow"><div>Cadence<div class="note">when retraining is triggered</div></div>
+        <select onchange="setTrain('cadence',this.value)">
+          ${['nightly','weekly','on-N-labels','manual'].map(o=>`<option ${set.cadence===o?'selected':''}>${o}</option>`).join('')}</select></div>
+      <div class="ctrlrow"><div>Min new labels<div class="note">trigger threshold for "on-N-labels"</div></div>
+        <input type="number" style="width:70px" value="${set.min_new_labels}" onchange="setTrain('min_new_labels',+this.value)"></div>
+      <div class="ctrlrow"><div>Eval-gate target<div class="note">promote only if golden-set ≥ this</div></div>
+        <div style="display:flex;align-items:center;gap:9px"><input type="range" min="0.8" max="1" step="0.01" value="${set.target}" style="width:130px"
+          oninput="this.nextElementSibling.textContent=Math.round(this.value*100)+'%'" onchange="setTrain('target',+this.value)"><b class="pval">${Math.round(set.target*100)}%</b></div></div>
+      <div class="ctrlrow"><div>Auto-promote<div class="note">off = human approval required</div></div>${sw(set.auto_promote,`setTrain('auto_promote',${!set.auto_promote})`)}</div>
+      <div style="display:flex;gap:10px;margin-top:14px;align-items:center">
+        <button class="btn primary" onclick="retrain()">⟳ Retrain now</button>
+        <span class="note">${t.labels_since_train} new labels · ${t.labels_total} total</span></div>
+      ${banner}
+    </div>
+    <div class="panel"><h2>Where &amp; when</h2>
+      <div class="note">
+        <b>Where:</b> training runs on the <b>${t.where}</b>. This console is the control plane —
+        it collects human-verified labels and dispatches the job.<br><br>
+        <b>When:</b> default <b>nightly</b> after the batch footage run, plus on ≥N new labels or manual.<br><br>
+        <b>Safety:</b> every candidate is scored on a frozen <b>golden set</b> and promoted only if it
+        beats the live model and clears the target — so even nightly retrains can't silently degrade.
+      </div>
+      <h2 style="margin-top:16px">Models &amp; pending labels</h2>
+      <table>${models}</table>
+    </div>
+   </div>
+   <div class="panel" style="margin-top:14px"><h2>Model registry</h2>
+     <table><tr><th>Version</th><th class="num">Golden score</th><th>Status</th></tr>${reg}</table></div>`;
+}
+async function setTrain(k,v){S=await api('/api/train_settings',{[k]:v});render();}
+async function promote(v){const r=await api('/api/promote',{version:v});S=r.state;render();}
+async function retrain(){const r=await api('/api/retrain');S=r.state;render();}
+
+function renderSources(){
+  const n=SRC.nvr,cams=SRC.cameras,roles=['entry','exit','common'],M='font-family:var(--mono)';
+  const purl=c=>{const auth=n.username?`${n.username}:****@`:'';
+    if(n.brand==='hikvision'){const sid=c.stream==='main'?1:2;return `rtsp://${auth}${n.host||'<host>'}:${n.rtsp_port}/Streaming/Channels/${c.channel*100+sid}`;}
+    if(n.brand==='dahua'){const st=c.stream==='main'?0:1;return `rtsp://${auth}${n.host||'<host>'}:${n.rtsp_port}/cam/realmonitor?channel=${c.channel}&subtype=${st}`;}
+    return '(generic — set a full rtsp:// source)';};
+  const camRows=cams.map((c,i)=>`<tr>
+    <td><input value="${c.id}" onchange="SRC.cameras[${i}].id=this.value;render()" style="width:120px"></td>
+    <td><select onchange="SRC.cameras[${i}].role=this.value;render()">${roles.map(r=>`<option ${c.role===r?'selected':''}>${r}</option>`).join('')}</select></td>
+    <td><input type="number" value="${c.channel}" onchange="SRC.cameras[${i}].channel=+this.value;render()" style="width:64px"></td>
+    <td><select onchange="SRC.cameras[${i}].stream=this.value;render()"><option ${c.stream==='main'?'selected':''}>main</option><option ${c.stream==='sub'?'selected':''}>sub</option></select></td>
+    <td style="${M};font-size:12px;color:var(--mut)">${purl(c)}</td>
+    <td><button class="btn" onclick="SRC.cameras.splice(${i},1);render()">✕</button></td></tr>`).join('');
+  $('view').innerHTML=`
+   <div class="panel"><h2>NVR connection</h2>
+    <div class="note" style="margin-bottom:12px">Prefer a <b>VPN / secure tunnel</b> to the NVR over a raw public port-forward.</div>
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 18px;max-width:700px">
+     <label>Brand<br><select onchange="SRC.nvr.brand=this.value;render()">${['hikvision','dahua','generic'].map(b=>`<option ${n.brand===b?'selected':''}>${b}</option>`).join('')}</select></label>
+     <label>Host / tunnel endpoint<br><input value="${n.host}" onchange="SRC.nvr.host=this.value;render()" placeholder="10.0.0.5 or tunnel host" style="width:100%"></label>
+     <label>RTSP port<br><input type="number" value="${n.rtsp_port}" onchange="SRC.nvr.rtsp_port=+this.value;render()" style="width:100%"></label>
+     <label>Username<br><input value="${n.username}" onchange="SRC.nvr.username=this.value;render()" style="width:100%"></label>
+     <label>Password<br><input type="password" value="${n.password}" onchange="SRC.nvr.password=this.value" style="width:100%"></label>
+    </div></div>
+   <div class="panel" style="margin-top:14px">
+    <div style="display:flex;align-items:center;margin-bottom:10px"><h2 style="margin:0">Cameras</h2>
+     <button class="btn" style="margin-left:auto" onclick="SRC.cameras.push({id:'cam_'+(SRC.cameras.length+1),role:'common',channel:SRC.cameras.length+1,stream:'main'});render()">+ Add camera</button></div>
+    <table><tr><th>ID</th><th>Role</th><th>Channel</th><th>Stream</th><th>RTSP URL (preview)</th><th></th></tr>${camRows}</table>
+    <div style="display:flex;gap:10px;margin-top:14px;align-items:center;flex-wrap:wrap">
+     <button class="btn primary" onclick="saveSources()">Save config</button>
+     <button class="btn" onclick="testSources()">Test connection</button>
+     <span class="note">writes <span style="${M}">${SRC.config_path||'configs/cameras.yaml'}</span></span>
+     <span id="srcmsg" class="note"></span></div>
+    <div id="srctest"></div></div>`;
+}
+async function saveSources(){SRC=await api('/api/sources',{nvr:SRC.nvr,cameras:SRC.cameras});document.getElementById('srcmsg').innerHTML='<span class="ok">saved ✓</span>';}
+async function testSources(){document.getElementById('srctest').innerHTML='<div class="note" style="margin-top:10px">testing… (works only where the NVR / tunnel is reachable)</div>';
+  const r=await api('/api/sources/test',{});document.getElementById('srctest').innerHTML='<div style="margin-top:10px">'+r.results.map(x=>`<div class="ctrlrow"><span>${x.id}</span><span class="${x.ok?'ok':'no'}">${x.ok?'● reachable':'○ '+(x.error||'unreachable')}</span></div>`).join('')+'</div>';}
+
+async function refresh(){S=await api('/api/state');render();}
+async function reset(){await api('/api/reset',{});CV={};await refresh();}
+document.getElementById('nav').addEventListener('click',e=>{const a=e.target.closest('a');if(a)go(a.dataset.v);});
+refresh();
+</script>
+</body>
+</html>

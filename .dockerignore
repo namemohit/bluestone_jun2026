@@ -1,0 +1,29 @@
+# Keep the Cloud Build context small + never ship footage or secrets into the image.
+.git/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# footage + run outputs (huge; the job reads footage from GCS at runtime)
+data/
+outputs/
+*.ts
+*.mp4
+*.avi
+*.jpg
+*.jpeg
+*.png
+
+# model weights are baked by the Dockerfile (downloaded at build), don't ship local copies
+*.pt
+*.onnx
+models/
+
+# SECRETS — never bake NVR creds into a cloud image
+configs/nvr.json
+configs/nvr.example.json
+
+# misc
+.claude/
+*.log
+tests/

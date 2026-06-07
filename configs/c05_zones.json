@@ -1,0 +1,11 @@
+{
+  "camera": "C05",
+  "role": "entry",
+  "_note": "Validated entry line at the door (user-corrected). inside='right' => crossing onto the store side counts as IN. street_mask = through-glass street region (feet here are ignored).",
+  "entry_line": [[0.46, 0.80], [0.64, 0.99]],
+  "inside": "right",
+  "street_mask": [[0.34, 0.05], [1.0, 0.05], [1.0, 0.60], [0.66, 0.66], [0.40, 0.52], [0.34, 0.22]],
+  "street_drop_frac": 0.5,
+  "dedup_window_s": 18,
+  "min_bbox_h": 0.0
+}

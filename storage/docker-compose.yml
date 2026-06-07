@@ -1,0 +1,24 @@
+# Local Postgres + pgvector for development.
+#   docker compose -f storage/docker-compose.yml up -d
+# schema.sql is applied automatically on first init.
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: showroom_db
+    environment:
+      POSTGRES_USER: tracker
+      POSTGRES_PASSWORD: tracker
+      POSTGRES_DB: showroom
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tracker -d showroom"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Showroom · Review</title>
+<style>
+  :root { --bg:#0f1216; --card:#181d24; --line:#262d37; --ink:#e7ecf3; --dim:#8a95a5;
+          --ok:#37b86a; --no:#e0533d; --warn:#e3a02b; --accent:#4c8dff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { position:sticky; top:0; background:#10141a; border-bottom:1px solid var(--line);
+           padding:12px 18px; display:flex; gap:18px; align-items:center; flex-wrap:wrap; z-index:5; }
+  header h1 { font-size:16px; margin:0; font-weight:650; }
+  select { background:var(--card); color:var(--ink); border:1px solid var(--line);
+           border-radius:8px; padding:6px 10px; }
+  #refreshBtn { background:var(--accent); color:#fff; border:none; border-radius:8px;
+                padding:6px 12px; cursor:pointer; font-weight:600; }
+  #refreshBtn:active { transform:scale(.95); }
+  .auto { color:var(--dim); font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer; }
+  .metrics { display:flex; gap:16px; margin-left:auto; flex-wrap:wrap; }
+  .metric { text-align:center; }
+  .metric b { font-size:18px; display:block; }
+  .metric span { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+  main { padding:18px; max-width:1100px; margin:0 auto; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim);
+       margin:26px 0 10px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px;
+          margin-bottom:12px; display:flex; gap:14px; align-items:center; }
+  .card.review { border-left:3px solid var(--warn); }
+  .card.confirm { border-left:3px solid var(--ok); }
+  .card.reject { opacity:.5; border-left:3px solid var(--no); }
+  .crops { display:flex; gap:8px; }
+  .crops figure { margin:0; text-align:center; }
+  .crops img { height:120px; width:auto; max-width:120px; object-fit:cover; border-radius:8px;
+               background:#0a0d11; border:1px solid var(--line); }
+  .crops figcaption { color:var(--dim); font-size:10px; margin-top:3px; }
+  .meta { flex:1; min-width:0; }
+  .meta .when { font-size:15px; font-weight:600; }
+  .meta .how { color:var(--dim); font-size:12px; margin-top:2px; }
+  .bar { height:6px; background:#0a0d11; border-radius:4px; margin-top:8px; max-width:240px; overflow:hidden; }
+  .bar i { display:block; height:100%; background:linear-gradient(90deg,var(--no),var(--warn),var(--ok)); }
+  .tag { display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; margin-top:6px;
+         text-transform:uppercase; letter-spacing:.03em; }
+  .tag.review { background:rgba(227,160,43,.16); color:var(--warn); }
+  .tag.auto { background:rgba(76,141,255,.14); color:var(--accent); }
+  .tag.done { background:rgba(55,184,106,.16); color:var(--ok); }
+  .btns { display:flex; flex-direction:column; gap:6px; }
+  button { border:1px solid var(--line); background:#202732; color:var(--ink); border-radius:8px;
+           padding:7px 12px; cursor:pointer; font-size:13px; white-space:nowrap; }
+  button:hover { border-color:var(--accent); }
+  button.ok:hover { border-color:var(--ok); } button.no:hover { border-color:var(--no); }
+  .mini { display:flex; gap:10px; flex-wrap:wrap; }
+  .mini .ev { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px;
+              text-align:center; cursor:pointer; width:110px; }
+  .mini .ev.sel { border-color:var(--accent); box-shadow:0 0 0 2px rgba(76,141,255,.3); }
+  .mini .ev img { height:96px; width:auto; max-width:94px; border-radius:6px; }
+  .mini .ev .lb { font-size:11px; color:var(--dim); margin-top:4px; }
+  .linkbar { margin:10px 0; padding:10px; background:rgba(76,141,255,.08); border:1px dashed var(--accent);
+             border-radius:10px; display:none; gap:10px; align-items:center; }
+  .linkbar.show { display:flex; }
+  .hint { color:var(--dim); font-size:12px; }
+  .empty { color:var(--dim); font-style:italic; }
+  #toast { position:fixed; left:50%; bottom:26px; transform:translateX(-50%); background:#222a36;
+           border:1px solid var(--accent); border-radius:10px; padding:11px 14px; display:none;
+           gap:12px; align-items:center; z-index:30; box-shadow:0 8px 28px rgba(0,0,0,.45); }
+  #toast.show { display:flex; }
+  #toast b { color:#fff; }
+  #toast button.undo { background:var(--accent); border:none; color:#fff; font-weight:600; }
+  #toast button.x { background:#39424f; border:none; color:var(--dim); padding:7px 10px; }
+  .staffrow .ev { opacity:.7; border-style:dashed; }
+  .nocrop { height:120px; width:88px; display:flex; align-items:center; justify-content:center;
+            font-size:34px; background:#0a0d11; border:1px dashed var(--line); border-radius:8px; color:#3a4654; }
+  .mini .nocrop { height:96px; width:76px; font-size:26px; }
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; z-index:40; }
+  .modal.show { display:flex; }
+  .modalbox { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; min-width:300px; max-width:90vw; }
+  .modalbox h3 { font-size:15px; }
+  .emplist { display:flex; flex-direction:column; gap:6px; max-height:50vh; overflow:auto; }
+  .empbtn { text-align:left; background:#202732; }
+  .empbtn:hover { border-color:var(--ok); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛍️ Showroom · Review</h1>
+  <select id="win" onchange="load()"></select>
+  <button id="refreshBtn" onclick="loadWindows()" title="Reload latest results">↻ Refresh</button>
+  <label class="auto"><input type="checkbox" id="autoref" onchange="toggleAuto()"> auto</label>
+  <div class="metrics" id="metrics"></div>
+</header>
+<main>
+  <div id="linkbar" class="linkbar">
+    <span>Linking: <b id="linkInfo"></b></span>
+    <button class="ok" onclick="doLink()">Link as one visit ✓</button>
+    <button onclick="clearSel()">Cancel</button>
+  </div>
+  <h2>Entries — everyone who crossed the door, by time (L2)</h2>
+  <div class="mini" id="entries"></div>
+  <h2>Visits — matched entry→exit (L4) · review the uncertain ones first</h2>
+  <div id="visits"></div>
+  <h2>Still inside at window end</h2>
+  <div class="mini" id="open"></div>
+  <h2>Exited but entered before the window</h2>
+  <div class="mini" id="pre"></div>
+  <h2>Marked as staff — hidden from customer counts (click ↩ to undo)</h2>
+  <div class="mini staffrow" id="staff"></div>
+  <h2 id="detsHead">All detections — everyone the cameras saw, door + interior (L1)</h2>
+  <div class="mini" id="dets"></div>
+  <p class="hint" style="margin-top:24px">Tip: click one “still inside” + one “pre-window exit” to link them into a recovered visit. Every action can be undone.</p>
+</main>
+<div id="toast"><b id="toastMsg"></b><button class="undo" onclick="undoLast()">↩ Undo</button><button class="x" onclick="hideToast()">✕</button></div>
+<div id="staffModal" class="modal"><div class="modalbox">
+  <h3 style="margin:0 0 10px">Assign to staff member</h3>
+  <div id="empList" class="emplist"></div>
+  <div style="margin-top:12px;display:flex;gap:8px">
+    <button class="ok" onclick="createStaff()">➕ New staff</button>
+    <button onclick="closeStaff()">Cancel</button>
+  </div>
+</div></div>
+<script>
+const $ = s => document.querySelector(s);
+const cropURL = p => `/api/hitl/crop?path=${encodeURIComponent(p)}`;
+let WIN = null, sel = {open:null, pre:null}, RO = false, HIDE = false;
+// faces are hidden only when the server says so (unprotected public view); a password unhides them
+const cropImg = p => HIDE ? '<div class="nocrop" title="face hidden on this view">👤</div>' : `<img src="${cropURL(p)}">`;
+
+async function loadWindows() {
+  const r = await fetch('/api/hitl/windows').then(r=>r.json());
+  RO = !!r.readonly; HIDE = !!r.hide_faces;
+  if (RO) { document.querySelector('header h1').innerHTML = '🛍️ Showroom · Live Results <span style="font-size:11px;color:var(--dim)">(read-only)</span>'; }
+  const sel = $('#win');
+  sel.innerHTML = r.windows.map(w=>`<option value="${w.window}">${w.window} · ${w.visits} visits</option>`).join('');
+  if (r.windows.length) {
+    const dated = r.windows.filter(w=>/^\d{4}-\d{2}-\d{2}_\d/.test(w.window)); // real processed hours
+    const pool = dated.length ? dated : r.windows;
+    const best = pool.reduce((a,b)=>(b.visits||0)>(a.visits||0)?b:a, pool[0]);
+    if (!WIN || !r.windows.some(w=>w.window===WIN)) WIN = best.window; // keep current selection across refresh
+    sel.value = WIN; load();
+  } else $('#visits').innerHTML = '<p class="empty">No processed windows yet.</p>';
+}
+let autoTimer = null;
+function toggleAuto(){
+  if ($('#autoref').checked) autoTimer = setInterval(loadWindows, 15000);
+  else { clearInterval(autoTimer); autoTimer = null; }
+}
+
+function metricsHTML(m){
+  m = m || {};
+  const pct = m.precision==null ? '—' : Math.round(m.precision*100)+'%';
+  return `<div class="metric"><b>${m.visits||0}</b><span>visits</span></div>
+          <div class="metric"><b>${m.reviewed||0}</b><span>reviewed</span></div>
+          <div class="metric"><b style="color:var(--ok)">${pct}</b><span>precision</span></div>
+          <div class="metric"><b>${m.unreviewed||0}</b><span>to&nbsp;go</span></div>`;
+}
+
+async function load(){
+  WIN = $('#win').value || WIN;
+  const d = await fetch(`/api/hitl/visits/${WIN}`).then(r=>r.json());
+  $('#metrics').innerHTML = metricsHTML(d.metrics||{});
+  // visit cards
+  $('#visits').innerHTML = (d.visits||[]).map(v=>{
+    const cls = v.label==='confirm'?'confirm':v.label==='reject'?'reject':(v.status==='needs_review'?'review':'');
+    const tag = v.label ? `<span class="tag done">${v.label==='confirm'?'confirmed':v.label}</span>`
+                        : `<span class="tag ${v.status==='needs_review'?'review':'auto'}">${v.status==='needs_review'?'needs review':'auto'}</span>`;
+    return `<div class="card ${cls}">
+      <div class="crops">
+        <figure>${cropImg(v.in_crop)}<figcaption>IN</figcaption></figure>
+        <figure>${cropImg(v.out_crop)}<figcaption>OUT</figcaption></figure>
+      </div>
+      <div class="meta">
+        <div class="when">${v.in_ist} → ${v.out_ist} · ${Math.round(v.dwell_s)}s</div>
+        <div class="how">${v.how}</div>
+        <div class="bar"><i style="width:${Math.round((v.confidence||0)*100)}%"></i></div>
+        ${tag}
+      </div>
+      ${RO ? '' : `<div class="btns">
+        <button class="ok" onclick="label('${v.id}','confirm',${v.in_track},${v.out_track})">✓ Same person</button>
+        <button class="no" onclick="label('${v.id}','reject',${v.in_track},${v.out_track})">✗ Wrong match</button>
+        <button onclick="openStaffPicker('${v.id}',${v.in_track},'${v.in_crop}')">👤 Staff</button>
+      </div>`}
+    </div>`;
+  }).join('') || '<p class="empty">No matched visits.</p>';
+  // unmatched events
+  $('#open').innerHTML = (d.open_sessions||[]).map(e=>evHTML('open',e)).join('') || '<p class="empty">none</p>';
+  $('#pre').innerHTML  = (d.pre_window_exits||[]).map(e=>evHTML('pre',e)).join('') || '<p class="empty">none</p>';
+  $('#staff').innerHTML = (d.staff||[]).map(g=>{
+      const lab = g.employee_id ? `${g.code||('S'+g.employee_id)}${g.name?' · '+g.name:''}` : 'unassigned';
+      const act = RO ? '' : (g.employee_id ? `<button onclick="renameStaff(${g.employee_id})">✎ name</button> ` : '')
+                          + `<button onclick="unstaffGroup('${(g.visit_ids||[]).join('|')}')">↩</button>`;
+      return `<div class="ev" style="width:auto;min-width:140px"><div class="lb"><b>${lab}</b><br>${g.tracks.length}×: ${g.tracks.map(t=>'#'+t).join(' ')}</div>${act}</div>`;
+    }).join('') || '<p class="empty">none — click 👤 on a visit/person to assign them</p>';
+  $('#entries').innerHTML = (d.entries||[]).map(entryHTML).join('') || '<p class="empty">no door entries yet in this window</p>';
+  renderLinkbar();
+  // L1 — all raw detections (separate, heavier fetch)
+  const dets = await fetch('/api/hitl/detections/'+encodeURIComponent(WIN)).then(r=>r.json()).catch(()=>({detections:[]}));
+  const ds = dets.detections||[];
+  $('#detsHead').textContent = `All detections — everyone the cameras saw, door + interior (L1) · ${ds.length}`;
+  $('#dets').innerHTML = ds.map(detHTML).join('') || '<p class="empty">none</p>';
+}
+function entryHTML(e){
+  return `<div class="ev">${cropImg(e.crop)}<div class="lb">${e.ist}<br>#${e.track} ${e.matched?'· visit':''}</div></div>`;
+}
+function detHTML(d){
+  return `<div class="ev">${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist}<br>#${d.track} · ${Math.round(d.dur_s||0)}s</div></div>`;
+}
+
+function evHTML(kind,e){
+  const on = sel[kind] && sel[kind].track===e.track ? 'sel' : '';
+  const click = RO ? '' : `onclick="pick('${kind}',${e.track},'${e.crop}')"`;
+  const btn = RO ? '' : `<button onclick="event.stopPropagation();openStaffPicker('open-${e.track}',${e.track},'${e.crop}')">👤 staff</button>`;
+  return `<div class="ev ${on}" ${click}>
+    ${cropImg(e.crop)}<div class="lb">${e.ist}<br>#${e.track}</div>${btn}</div>`;
+}
+
+function pick(kind,track,crop){ sel[kind] = {track,crop}; load(); }
+function clearSel(){ sel={open:null,pre:null}; renderLinkbar(); load(); }
+function renderLinkbar(){
+  const bar=$('#linkbar');
+  if (sel.open && sel.pre){ bar.classList.add('show');
+    $('#linkInfo').textContent = `IN #${sel.open.track} + OUT #${sel.pre.track}`; }
+  else bar.classList.remove('show');
+}
+
+const VERB = {confirm:'confirmed ✓', reject:'marked wrong ✗', employee:'marked staff 👤'};
+async function label(id,verdict,inT,outT){
+  const d = await fetch('/api/hitl/label',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({window:WIN,visit_id:id,verdict,in_track:inT,out_track:outT})}).then(r=>r.json());
+  paint(d);
+  showToast(`Visit ${id} ${VERB[verdict]||verdict}`, ()=>unlabelVisit(id,inT,outT));
+}
+let pickCtx = null;
+async function openStaffPicker(visitId, track, crop){
+  pickCtx = {visitId, track, crop};
+  const r = await fetch('/api/hitl/employees').then(r=>r.json());
+  $('#empList').innerHTML = (r.employees||[]).map(e=>`<button class="empbtn" onclick="assignStaff(${e.id})">${e.code}${e.name?' · '+e.name:''}</button>`).join('')
+      || '<p class="empty">No staff yet — create the first one below.</p>';
+  $('#staffModal').classList.add('show');
+}
+function closeStaff(){ $('#staffModal').classList.remove('show'); }
+async function createStaff(){
+  const name = (prompt('Staff name (optional — you can add it later):','')||'').trim() || null;
+  const e = await fetch('/api/hitl/employees',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}).then(r=>r.json());
+  assignStaff(e.id);
+}
+async function assignStaff(empId){
+  const c = pickCtx; closeStaff();
+  const d = await fetch('/api/hitl/label',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({window:WIN, visit_id:c.visitId, verdict:'employee', in_track:c.track, employee_id:empId, crop:c.crop})}).then(r=>r.json());
+  clearSel(); paint(d);
+  showToast(`Assigned to Staff #${empId}`, ()=>unlabelVisit(c.visitId, c.track, null));
+}
+async function renameStaff(empId){
+  const name = (prompt('Name for Staff #'+empId+':','')||'').trim();
+  if (!name) return;
+  await fetch('/api/hitl/employees/'+empId,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+  loadWindows();
+}
+async function unstaffGroup(visitIdsStr){
+  for (const vid of visitIdsStr.split('|').filter(Boolean)){ await unlabelVisit(vid, null, null); }
+}
+async function doLink(){
+  const a=sel.open.track, b=sel.pre.track;
+  const d = await fetch('/api/hitl/link',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({window:WIN,in_track:a,out_track:b})}).then(r=>r.json());
+  sel={open:null,pre:null}; paint(d);
+  showToast(`Linked #${a} → #${b} into one visit`, ()=>unlabelVisit(`${a}-${b}`,a,b));
+}
+async function unlabelVisit(id,inT,outT){
+  const d = await fetch('/api/hitl/unlabel',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({window:WIN,visit_id:id,in_track:inT,out_track:outT})}).then(r=>r.json());
+  paint(d); hideToast();
+}
+function paint(d){ if(d&&d.metrics){ $('#metrics').innerHTML=metricsHTML(d.metrics); } load(); }
+
+let lastUndo=null, toastTimer=null;
+function showToast(msg, undoFn){
+  lastUndo=undoFn; $('#toastMsg').textContent=msg; $('#toast').classList.add('show');
+  clearTimeout(toastTimer); toastTimer=setTimeout(hideToast, 9000);
+}
+function hideToast(){ $('#toast').classList.remove('show'); }
+function undoLast(){ if(lastUndo) lastUndo(); }
+
+loadWindows();
+</script>
+</body>
+</html>

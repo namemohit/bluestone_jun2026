@@ -1,0 +1,14 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - cloud/Dockerfile
+      - -t
+      - asia-south1-docker.pkg.dev/$PROJECT_ID/showroom/stack:latest
+      - .
+images:
+  - asia-south1-docker.pkg.dev/$PROJECT_ID/showroom/stack:latest
+timeout: 2400s
+options:
+  machineType: E2_HIGHCPU_8

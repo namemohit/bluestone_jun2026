@@ -1,0 +1,7 @@
+# Core dependencies — GPU-free.
+# Enough to run: geometry, directional counting, the SYNTHETIC pipeline demo,
+# the config loader, the accuracy harness, and the test suite.
+numpy>=1.26
+opencv-python>=4.9
+PyYAML>=6.0
+pytest>=8.0

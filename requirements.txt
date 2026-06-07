@@ -1,0 +1,28 @@
+# Full dependencies for the real (model-backed) pipeline.
+# Install core first (requirements-core.txt) if you only want the GPU-free demo/tests.
+
+# --- Core (GPU-free) ---
+numpy>=1.26
+opencv-python>=4.9
+PyYAML>=6.0
+pytest>=8.0
+requests>=2.31          # NVR ISAPI recorded-footage download (HTTP Digest auth)
+tzdata>=2024.1          # IANA timezone DB for zoneinfo on Windows (IST<->UTC)
+
+# --- Vision models (heavy; needs PyTorch, ideally a CUDA GPU) ---
+# Install torch/torchvision matching your CUDA from https://pytorch.org first.
+ultralytics>=8.3        # YOLO detector + BoT-SORT/ByteTrack tracking
+boxmot>=10.0            # alternative trackers + standalone ReID (Phase 1 fusion)
+
+# --- Face recognition + demographics (Phase 2) ---
+insightface>=0.7        # ArcFace embeddings + genderage model
+onnxruntime>=1.17       # use onnxruntime-gpu on a CUDA box
+# mivolo — install from source: https://github.com/WildChlamydia/MiVOLO (age/gender, face+body)
+
+# --- Storage (optional; pipeline runs with storage.enabled=false without these) ---
+psycopg[binary]>=3.1
+pgvector>=0.2
+
+# --- Review dashboard / API (later phases) ---
+fastapi>=0.110
+uvicorn>=0.29

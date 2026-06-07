@@ -1,0 +1,25 @@
+{
+  "_comment": "Copy to configs/nvr.json (git-ignored) and fill real values. Reached via the showroom port-forward: public IP + per-NVR public_port. Use an account with playback rights (guest is often blocked).",
+  "nvr_public_ip": "<PUBLIC_WAN_IP>",
+  "use_public_ip": true,
+  "devices": [
+    {
+      "name": "NVR 1",
+      "internal_ip": "172.16.x.x",
+      "internal_port": 80,
+      "public_port": 89,
+      "username": "<USERNAME>",
+      "password": "<PASSWORD>",
+      "channels": [1, 2, 3, 4, 5]
+    },
+    {
+      "name": "NVR 2",
+      "internal_ip": "172.16.x.x",
+      "internal_port": 88,
+      "public_port": 88,
+      "username": "<USERNAME>",
+      "password": "<PASSWORD>",
+      "channels": [5, 11, 14]
+    }
+  ]
+}

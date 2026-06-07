@@ -1,0 +1,9 @@
+{
+  "_README": "Copy to configs/supabase.json (gitignored) and fill in. These are for THIS project's showroom schema only — do not paste yantrai keys you don't want reused here.",
+  "url": "https://<your-project-ref>.supabase.co",
+  "anon_key": "<public anon key — safe in the browser, used for dashboard READS>",
+  "service_role_key": "<SECRET — server/pipeline WRITES only, never shipped to the browser>",
+  "db_url": "postgresql://postgres:<db-password>@db.<your-project-ref>.supabase.co:5432/postgres",
+  "schema": "showroom",
+  "storage_bucket": "showroom-crops"
+}

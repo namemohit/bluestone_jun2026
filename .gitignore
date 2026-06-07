@@ -1,0 +1,37 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Model weights
+*.pt
+*.onnx
+*.engine
+*.pth
+
+# Data & generated outputs
+data/
+outputs/
+*.mp4
+*.avi
+*.mkv
+# but keep tiny test fixtures if any are committed
+!tests/fixtures/**
+
+# Secrets / real (non-example) configs
+.env
+configs/cameras.yaml
+configs/nvr.json
+configs/supabase.json
+configs/*.local.yaml
+cloud/dashboard.env.yaml
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

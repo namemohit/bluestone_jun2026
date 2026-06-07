@@ -1,0 +1,8 @@
+{
+  "_note": "Describes one store's cameras for batch.run_stack. ist_start = real-IST wall-clock of frame 0 of the day clips (clock-offset already applied during download). For the full day use 10:00:00; for the 6 PM test use 18:00:00.",
+  "store": "bluestone-s14",
+  "ist_start": "2026-06-03 18:00:00",
+  "fps": 5,
+  "entry": {"cam": "c05", "zones": "configs/c05_zones.json"},
+  "interior": ["c11", "c14"]
+}
