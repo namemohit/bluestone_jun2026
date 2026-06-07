@@ -50,6 +50,22 @@ create table if not exists showroom.events (
   unique (window_id, track, direction)
 );
 
+-- ---- detections: L1 raw tracks (every camera) — regenerable snapshot for the detections view ----
+--   + attendance (a staffer's in_track joins here for first/last sighting). Replaced per window push.
+create table if not exists showroom.detections (
+  id         bigint generated always as identity primary key,
+  window_id  text not null references showroom.windows(id) on delete cascade,
+  camera     text not null,                                 -- 'C05' (door) | 'C11' | 'C14' (interior)
+  track      integer not null,
+  first_ist  timestamptz,
+  last_ist   timestamptz,
+  dur_s      numeric,
+  frames     integer,
+  crop_url   text,
+  created_at timestamptz not null default now()
+);
+create index if not exists detections_by_window on showroom.detections (window_id);
+
 -- ---- visits: an IN<->OUT pairing = one customer visit ---------------------
 create table if not exists showroom.visits (
   window_id    text not null references showroom.windows(id) on delete cascade,
@@ -78,11 +94,12 @@ create table if not exists showroom.labels (
   id         bigint generated always as identity primary key,
   window_id  text not null references showroom.windows(id) on delete cascade,
   visit_id   text not null,                              -- visit id OR 'open-<track>'
-  verdict    text not null check (verdict in ('confirm','reject','employee','false_detection')),
+  verdict    text not null check (verdict in ('confirm','reject','employee','false_detection','reset')),
   reason     text default '',
   in_track   integer,
   out_track  integer,
-  reviewer   text not null default 'human',
+  employee_id integer,                                      -- which staffer (set on 'employee' verdicts)
+  reviewer   text not null default 'human',                 -- 'human' | 'auto' (gallery-recognised)
   created_at timestamptz not null default now()
 );
 create index if not exists labels_by_window on showroom.labels (window_id, created_at desc);
@@ -121,10 +138,24 @@ create table if not exists showroom.employees (
   id          integer generated always as identity primary key,
   store_id    text not null references showroom.stores(id),
   name        text,
+  code        text,                                       -- 'S<id>' display code (Staff #N)
   crop_urls   text[] default '{}',
   embedding   jsonb,                                      -- swap to pgvector(512) for in-DB ReID later
   enrolled_at timestamptz not null default now()
 );
+
+-- ---- employee_gallery: many OSNet embeddings per staffer -> robust cross-hour auto-recognition --
+create table if not exists showroom.employee_gallery (
+  id            bigint generated always as identity primary key,
+  employee_id   integer not null references showroom.employees(id) on delete cascade,
+  store_id      text not null,
+  embedding     jsonb not null,                           -- 512-d OSNet vector as a json list
+  crop_url      text,
+  source_window text,
+  source_track  integer,
+  added_at      timestamptz not null default now()
+);
+create index if not exists gallery_by_store on showroom.employee_gallery (store_id);
 
 -- ---- keep windows.updated_at fresh on every change ------------------------
 create or replace function showroom.touch_updated_at() returns trigger
@@ -143,3 +174,11 @@ select w.id, w.store_id, w.date, w.start_ist, w.status, w.model_version,
 from showroom.windows w
 left join showroom.visits v on v.window_id = w.id
 group by w.id;
+
+-- ---- idempotent column adds: re-run this file to sync an already-created DB ----
+alter table showroom.labels    add column if not exists employee_id integer;
+alter table showroom.employees add column if not exists code text;
+-- the labels verdict check predates 'reset'; widen it to match VERDICTS in hitl/store.py
+alter table showroom.labels drop constraint if exists labels_verdict_check;
+alter table showroom.labels add constraint labels_verdict_check
+  check (verdict in ('confirm','reject','employee','false_detection','reset'));
