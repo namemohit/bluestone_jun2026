@@ -110,18 +110,23 @@ def visits(window: str) -> dict:
     for v in data.get("visits", []):
         vd = labels.get(v["id"], {}).get("verdict")
         v["label"] = None if vd == "reset" else vd   # reset == undone == unlabelled
-    # staff grouped by employee (id/code/name) so the UI shows "Staff #1 (name)" not bare tracks
+    # staff grouped by employee; each group carries crop IMAGES so the UI shows the actual people
+    # (click to enlarge + verify the auto matches), not bare track numbers.
     emp_map = {e["id"]: e for e in store.list_employees()}
     groups: dict = {}
+    manual_tracks = set()
+
+    def _grp(eid):
+        return groups.setdefault(eid, {"employee_id": eid, "code": (emp_map.get(eid) or {}).get("code"),
+                                       "name": (emp_map.get(eid) or {}).get("name"),
+                                       "tracks": [], "visit_ids": [], "auto_tracks": []})
+
     for l in labels.values():
         if l.get("verdict") == "employee" and l.get("in_track") is not None:
-            eid = l.get("employee_id")
-            g = groups.setdefault(eid, {"employee_id": eid,
-                                        "code": (emp_map.get(eid) or {}).get("code"),
-                                        "name": (emp_map.get(eid) or {}).get("name"),
-                                        "tracks": [], "visit_ids": []})
+            g = _grp(l.get("employee_id"))
             g["tracks"].append(l["in_track"])
             g["visit_ids"].append(l["visit_id"])
+            manual_tracks.add(l["in_track"])            # a human click -> NOT an auto badge
     # merge gallery-recognised (auto) staff from the local L4 result (cloud read-only has no file)
     try:
         vj = OUTPUTS / window / "visits.json"
@@ -129,13 +134,33 @@ def visits(window: str) -> dict:
     except Exception:
         auto = []
     for a in auto:
-        eid = a.get("employee_id")
-        g = groups.setdefault(eid, {"employee_id": eid, "code": (emp_map.get(eid) or {}).get("code"),
-                                    "name": (emp_map.get(eid) or {}).get("name"),
-                                    "tracks": [], "visit_ids": []})
+        g = _grp(a.get("employee_id"))
         if a["track"] not in g["tracks"]:
             g["tracks"].append(a["track"])
-        g.setdefault("auto_tracks", []).append(a["track"])  # UI badges these as auto-recognised
+        if a["track"] not in manual_tracks:
+            g["auto_tracks"].append(a["track"])         # only truly-auto tracks get the robot badge
+    # one crop per track so the UI renders the grouped faces (interior crop preferred — clearest)
+    track_crop = {}
+    for v in data.get("visits", []):
+        if v.get("in_crop"):
+            track_crop[v["in_track"]] = v["in_crop"]
+        if v.get("out_crop"):
+            track_crop[v["out_track"]] = v["out_crop"]
+    for e in data.get("open_sessions", []) + data.get("pre_window_exits", []):
+        if e.get("crop"):
+            track_crop.setdefault(e["track"], e["crop"])
+    for a in auto:
+        if a.get("crop"):
+            track_crop[a["track"]] = a["crop"]
+    # fallback for manually-marked tracks that got filtered out of visits/open: the door (C05) crop
+    missing = {t for g in groups.values() for t in g["tracks"] if t not in track_crop}
+    if missing:
+        for d in store.get_detections(window):
+            if d.get("camera") == "C05" and d["track"] in missing and d.get("crop"):
+                track_crop.setdefault(d["track"], d["crop"])
+    for g in groups.values():
+        autoset = set(g["auto_tracks"])
+        g["crops"] = [{"track": t, "crop": track_crop.get(t), "auto": t in autoset} for t in g["tracks"]]
     data["staff"] = sorted(groups.values(), key=lambda g: (g["employee_id"] or 0))
     # L2: every door ENTRY (matched-visit INs + still-open INs), by timestamp
     data["entries"] = sorted(

@@ -80,6 +80,16 @@
   .emplist { display:flex; flex-direction:column; gap:6px; max-height:50vh; overflow:auto; }
   .empbtn { text-align:left; background:#202732; }
   .empbtn:hover { border-color:var(--ok); }
+  .empbtn img { height:54px; border-radius:5px; vertical-align:middle; margin-right:8px; }
+  .lbox { position:fixed; inset:0; background:rgba(0,0,0,.9); display:none; align-items:center;
+          justify-content:center; z-index:50; cursor:zoom-out; }
+  .lbox.show { display:flex; }
+  .lbox img { max-width:94vw; max-height:90vh; border-radius:10px; box-shadow:0 12px 50px rgba(0,0,0,.7); }
+  .lbox .cap { position:fixed; top:16px; left:50%; transform:translateX(-50%); color:#aab4c2; font-size:13px; }
+  .sgrp { display:flex; gap:8px; flex-wrap:wrap; margin:7px 0; }
+  .sgrp figure { margin:0; text-align:center; }
+  .sgrp img { height:88px; width:auto; max-width:84px; border-radius:6px; border:1px solid var(--line); }
+  .sgrp figcaption { font-size:10px; color:var(--dim); margin-top:2px; }
 </style>
 </head>
 <body>
@@ -113,6 +123,7 @@
   <p class="hint" style="margin-top:24px">Tip: click one “still inside” + one “pre-window exit” to link them into a recovered visit. Every action can be undone.</p>
 </main>
 <div id="toast"><b id="toastMsg"></b><button class="undo" onclick="undoLast()">↩ Undo</button><button class="x" onclick="hideToast()">✕</button></div>
+<div id="lightbox" class="lbox" onclick="closeZoom()"><div class="cap">click anywhere or press Esc to close</div><img id="lbimg"></div>
 <div id="staffModal" class="modal"><div class="modalbox">
   <h3 style="margin:0 0 10px">Assign to staff member</h3>
   <div id="empList" class="emplist"></div>
@@ -126,7 +137,11 @@ const $ = s => document.querySelector(s);
 const cropURL = p => `/api/hitl/crop?path=${encodeURIComponent(p)}`;
 let WIN = null, sel = {open:null, pre:null}, RO = false, HIDE = false;
 // faces are hidden only when the server says so (unprotected public view); a password unhides them
-const cropImg = p => HIDE ? '<div class="nocrop" title="face hidden on this view">👤</div>' : `<img src="${cropURL(p)}">`;
+const cropImg = p => HIDE ? '<div class="nocrop" title="face hidden on this view">👤</div>' : `<img src="${cropURL(p)}" onclick="event.stopPropagation();zoom('${p}')" style="cursor:zoom-in" title="click to enlarge">`;
+
+function zoom(p){ if(HIDE||!p) return; $('#lbimg').src = cropURL(p); $('#lightbox').classList.add('show'); }
+function closeZoom(){ $('#lightbox').classList.remove('show'); }
+document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeZoom(); closeStaff(); } });
 
 async function loadWindows() {
   const r = await fetch('/api/hitl/windows').then(r=>r.json());
@@ -189,12 +204,14 @@ async function load(){
   $('#pre').innerHTML  = (d.pre_window_exits||[]).map(e=>evHTML('pre',e)).join('') || '<p class="empty">none</p>';
   $('#staff').innerHTML = (d.staff||[]).map(g=>{
       const lab = g.employee_id ? `${g.code||('S'+g.employee_id)}${g.name?' · '+g.name:''}` : 'unassigned';
-      const auto = g.auto_tracks||[];
+      const nAuto = (g.auto_tracks||[]).length;
       const act = RO ? '' : (g.employee_id ? `<button onclick="renameStaff(${g.employee_id})">✎ name</button> ` : '')
-                          + `<button onclick="unstaffGroup('${(g.visit_ids||[]).join('|')}')">↩</button>`;
-      const tracks = g.tracks.map(t=>'#'+t+(auto.includes(t)?'🤖':'')).join(' ');
-      const badge = auto.length ? ' <span class="autob">🤖 auto</span>' : '';
-      return `<div class="ev" style="width:auto;min-width:140px"><div class="lb"><b>${lab}</b>${badge}<br>${g.tracks.length}×: ${tracks}</div>${act}</div>`;
+                          + `<button onclick="unstaffGroup('${(g.visit_ids||[]).join('|')}')">↩ not staff</button>`;
+      const imgs = (g.crops||[]).map(c=>`<figure>${c.crop?cropImg(c.crop):'<div class="nocrop">👤</div>'}<figcaption>#${c.track}${c.auto?' 🤖':''}</figcaption></figure>`).join('');
+      const sub = `${g.tracks.length} sighting${g.tracks.length>1?'s':''}` + (nAuto?` · ${nAuto} auto-found 🤖`:'');
+      return `<div class="ev" style="width:auto;min-width:160px;text-align:left">
+        <div class="lb" style="font-size:13px"><b>${lab}</b> · ${sub}</div>
+        <div class="sgrp">${imgs}</div>${act}</div>`;
     }).join('') || '<p class="empty">none — click 👤 on a visit/person to assign them</p>';
   loadAttendance();
   $('#entries').innerHTML = (d.entries||[]).map(entryHTML).join('') || '<p class="empty">no door entries yet in this window</p>';
