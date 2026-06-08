@@ -201,19 +201,69 @@ class SupabaseStore:
             return [dict(r) for r in cur.fetchall()]
 
     def attendance(self, store_id: str = "s14", date: str | None = None) -> list[dict]:
-        """Per employee: first/last sighting + how many windows they appear in (from staff labels
-        joined to detection timestamps)."""
+        """Per employee, across the day: first/last sighting, #sightings, #windows, and an hourly
+        TIMELINE [{window, in, out, crop}]. Sightings = MANUAL marks (labels) + AUTO-recognised tracks
+        (read local outputs/*/visits.json -> staff), each resolved to its door (C05) detection's
+        first/last time + crop. Local-first so the live push pipeline is untouched."""
+        import pathlib
         with self._cx() as cx, cx.cursor() as cur:
-            cur.execute(
-                "select e.id, e.code, e.name,"
-                " to_char(min(d.first_ist) at time zone 'Asia/Kolkata','HH24:MI:SS') first_seen,"
-                " to_char(max(d.last_ist) at time zone 'Asia/Kolkata','HH24:MI:SS') last_seen,"
-                " count(distinct l.window_id) windows, count(d.*) sightings"
-                " from employees e"
-                " left join latest_labels l on l.employee_id=e.id and l.verdict='employee'"
-                " left join detections d on d.window_id=l.window_id and d.track=l.in_track"
-                " where e.store_id=%s group by e.id, e.code, e.name order by e.id", (store_id,))
-            return [dict(r) for r in cur.fetchall()]
+            cur.execute("select id, name, code from employees where store_id=%s order by id", (store_id,))
+            emps = [dict(r) for r in cur.fetchall()]
+            cur.execute("select employee_id, window_id, in_track from latest_labels "
+                        "where employee_id is not null and verdict='employee' and in_track is not null")
+            manual = [(r["employee_id"], r["window_id"], r["in_track"]) for r in cur.fetchall()]
+        sightings = {}                                                  # (eid, window, track) -> source
+        for eid, win, tr in manual:
+            if not (date and not str(win).startswith(date)):
+                sightings[(eid, win, tr)] = "manual"
+        for vj in sorted(pathlib.Path(self.root).glob("*/visits.json")):  # auto from local L4 results
+            win = vj.parent.name
+            if date and not win.startswith(date):
+                continue
+            try:
+                staff = json.loads(vj.read_text(encoding="utf-8")).get("staff", [])
+            except Exception:
+                continue
+            for st in staff:
+                if st.get("employee_id") is not None and st.get("track") is not None:
+                    sightings.setdefault((st["employee_id"], win, st["track"]), "auto")
+        det = {}                                                        # (window, track) -> door detection
+        keys = {(w, t) for (_, w, t) in sightings}
+        if keys:
+            wins = tuple({w for w, t in keys})
+            tracks = tuple({t for w, t in keys})
+            with self._cx() as cx, cx.cursor() as cur:
+                cur.execute("select window_id, track,"
+                            " to_char(first_ist at time zone 'Asia/Kolkata','HH24:MI:SS') fi,"
+                            " to_char(last_ist at time zone 'Asia/Kolkata','HH24:MI:SS') la, crop_url crop"
+                            " from detections where camera='C05' and window_id in %s and track in %s",
+                            (wins, tracks))
+                for r in cur.fetchall():
+                    det[(r["window_id"], r["track"])] = r
+        by_emp: dict = {}                                               # eid -> window -> [detections]
+        for (eid, win, tr) in sightings:
+            d = det.get((win, tr))
+            if d:
+                by_emp.setdefault(eid, {}).setdefault(win, []).append(d)
+        out = []
+        for e in emps:
+            wmap = by_emp.get(e["id"], {})
+            timeline, alltimes = [], []
+            for win in sorted(wmap):
+                rows = wmap[win]
+                fis = sorted(r["fi"] for r in rows if r["fi"])
+                las = sorted(r["la"] for r in rows if r["la"])
+                crop = next((r["crop"] for r in rows if r.get("crop")), None)
+                if fis:
+                    timeline.append({"window": win, "in": fis[0], "out": las[-1] if las else fis[-1],
+                                     "crop": crop.replace("\\", "/") if crop else None})
+                    alltimes += fis + las
+            out.append({"id": e["id"], "code": e["code"], "name": e["name"],
+                        "first_seen": min(alltimes) if alltimes else None,
+                        "last_seen": max(alltimes) if alltimes else None,
+                        "windows": len(timeline), "sightings": sum(len(v) for v in wmap.values()),
+                        "timeline": timeline})
+        return out
 
     # ---- writes ---------------------------------------------------------
     def add_label(self, window: str, visit_id: str, verdict: str, *, reason: str = "",
@@ -226,16 +276,20 @@ class SupabaseStore:
                 "employee_id": employee_id}
 
     def feedback(self, window: str) -> dict:
-        cannot, must, employees = [], [], []
+        cannot, must, employees, not_staff = [], [], [], []
         for l in self.get_labels(window):
             it, ot, v = l.get("in_track"), l.get("out_track"), l["verdict"]
-            if v == "reject" and it is not None and ot is not None:
+            vid = l.get("visit_id", "")
+            if vid.startswith("notstaff-") and v == "reject" and it is not None:
+                not_staff.append(it)                         # human: this track is NOT staff
+            elif v == "reject" and it is not None and ot is not None:
                 cannot.append([it, ot])
             elif v == "confirm" and it is not None and ot is not None:
                 must.append([it, ot])
             elif v == "employee" and it is not None:
                 employees.append(it)
-        return {"cannot_link": cannot, "must_link": must, "employees": employees}
+        employees = [t for t in employees if t not in not_staff]   # not_staff overrides a staff mark
+        return {"cannot_link": cannot, "must_link": must, "employees": employees, "not_staff": not_staff}
 
     def write_feedback(self, window: str) -> str:
         d = self.root / window

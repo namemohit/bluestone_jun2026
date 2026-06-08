@@ -89,7 +89,18 @@
   .sgrp { display:flex; gap:8px; flex-wrap:wrap; margin:7px 0; }
   .sgrp figure { margin:0; text-align:center; }
   .sgrp img { height:88px; width:auto; max-width:84px; border-radius:6px; border:1px solid var(--line); }
-  .sgrp figcaption { font-size:10px; color:var(--dim); margin-top:2px; }
+  .sgrp figcaption { font-size:10px; color:var(--dim); margin-top:2px; white-space:nowrap; }
+  .xtrack { padding:0 5px; font-size:11px; line-height:1.3; margin-left:5px; color:var(--no); border-color:var(--line); }
+  .xtrack:hover { border-color:var(--no); background:rgba(224,83,61,.12); }
+  .acard { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:9px 12px;
+           cursor:pointer; min-width:210px; }
+  .acard:hover { border-color:var(--accent); }
+  .acard .tl { display:none; margin-top:9px; border-top:1px solid var(--line); padding-top:8px; }
+  .acard.open .tl { display:block; }
+  .caret { color:var(--accent); font-size:11px; }
+  .tlrow { display:flex; align-items:center; gap:9px; margin:5px 0; font-size:12px; color:var(--dim); }
+  .tlrow img { height:48px; width:auto; max-width:46px; border-radius:5px; border:1px solid var(--line); }
+  .tlrow .nocrop { height:48px; width:36px; font-size:18px; }
 </style>
 </head>
 <body>
@@ -207,7 +218,10 @@ async function load(){
       const nAuto = (g.auto_tracks||[]).length;
       const act = RO ? '' : (g.employee_id ? `<button onclick="renameStaff(${g.employee_id})">✎ name</button> ` : '')
                           + `<button onclick="unstaffGroup('${(g.visit_ids||[]).join('|')}')">↩ not staff</button>`;
-      const imgs = (g.crops||[]).map(c=>`<figure>${c.crop?cropImg(c.crop):'<div class="nocrop">👤</div>'}<figcaption>#${c.track}${c.auto?' 🤖':''}</figcaption></figure>`).join('');
+      const imgs = (g.crops||[]).map(c=>{
+        const x = RO?'':`<button class="xtrack" title="not this person — back to customers" onclick="event.stopPropagation();unstaffTrack(${c.track})">✗</button>`;
+        return `<figure>${c.crop?cropImg(c.crop):'<div class="nocrop">👤</div>'}<figcaption>#${c.track} ${c.auto?'🤖':'✋'}${x}</figcaption></figure>`;
+      }).join('');
       const sub = `${g.tracks.length} sighting${g.tracks.length>1?'s':''}` + (nAuto?` · ${nAuto} auto-found 🤖`:'');
       return `<div class="ev" style="width:auto;min-width:160px;text-align:left">
         <div class="lb" style="font-size:13px"><b>${lab}</b> · ${sub}</div>
@@ -226,10 +240,18 @@ async function loadAttendance(){
   const date = (WIN||'').split('_')[0] || '';
   const r = await fetch('/api/hitl/attendance'+(date?('?date='+date):'')).then(r=>r.json()).catch(()=>({attendance:[]}));
   const a = r.attendance||[];
-  const t = x => { if(!x) return '—'; const s=String(x); return s.length>=19 ? s.slice(11,19) : s; };
+  const hr = w => (String(w).split('_')[1]||'').replace(/(\d\d)(\d\d)/,'$1:$2');
   $('#attendance').innerHTML = a.map(e=>{
-    const span = (e.first_seen||e.last_seen) ? `${t(e.first_seen)} → ${t(e.last_seen)}` : '—';
-    return `<div class="ev" style="width:auto;min-width:175px"><div class="lb"><b>${e.code||('S'+e.id)}${e.name?' · '+e.name:''}</b><br>in/out: ${span}<br>${e.sightings||0} sightings · ${e.windows||0} window(s)</div></div>`;
+    const seen = e.first_seen || e.last_seen;
+    const span = seen ? `${e.first_seen||'—'} → ${e.last_seen||'—'}` : 'not seen yet';
+    const tl = (e.timeline||[]).map(w=>
+      `<div class="tlrow">${w.crop?cropImg(w.crop):'<div class="nocrop">👤</div>'}<span><b>${hr(w.window)}</b> &nbsp; ${w.in} → ${w.out}</span></div>`
+    ).join('') || '<div class="hint">no detailed sightings yet</div>';
+    return `<div class="acard" onclick="this.classList.toggle('open')" title="click for the hourly breakdown">
+      <div class="lb"><b>${e.code||('S'+e.id)}${e.name?' · '+e.name:''}</b><br>
+      check-in / out: <b style="color:var(--ink)">${span}</b><br>
+      ${e.sightings||0} sightings · ${e.windows||0} hour(s) <span class="caret">▸ details</span></div>
+      <div class="tl">${tl}</div></div>`;
   }).join('') || '<p class="empty">no staff enrolled yet — mark someone 👤 Staff to start tracking attendance</p>';
 }
 function entryHTML(e){
@@ -292,6 +314,12 @@ async function renameStaff(empId){
 }
 async function unstaffGroup(visitIdsStr){
   for (const vid of visitIdsStr.split('|').filter(Boolean)){ await unlabelVisit(vid, null, null); }
+}
+async function unstaffTrack(track){
+  const d = await fetch('/api/hitl/unstaff-track',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({window:WIN, track})}).then(r=>r.json());
+  showToast('#'+track+' set back to customer', ()=>unlabelVisit('notstaff-'+track, track, null));
+  paint(d);
 }
 async function doLink(){
   const a=sel.open.track, b=sel.pre.track;

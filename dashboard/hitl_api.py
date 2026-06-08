@@ -113,16 +113,25 @@ def visits(window: str) -> dict:
     # staff grouped by employee; each group carries crop IMAGES so the UI shows the actual people
     # (click to enlarge + verify the auto matches), not bare track numbers.
     emp_map = {e["id"]: e for e in store.list_employees()}
+    rank = {e["id"]: i + 1 for i, e in enumerate(sorted(emp_map.values(), key=lambda x: x["id"]))}
+
+    def _label(eid):  # display as "Staff #N" by enrollment order (store keeps the raw S<id>)
+        return f"Staff #{rank[eid]}" if eid in rank else (emp_map.get(eid) or {}).get("code")
+
+    not_staff = {l["in_track"] for l in labels.values()                 # human override: NOT staff
+                 if str(l.get("visit_id", "")).startswith("notstaff-") and l.get("verdict") == "reject"
+                 and l.get("in_track") is not None}
     groups: dict = {}
     manual_tracks = set()
 
     def _grp(eid):
-        return groups.setdefault(eid, {"employee_id": eid, "code": (emp_map.get(eid) or {}).get("code"),
+        return groups.setdefault(eid, {"employee_id": eid, "code": _label(eid),
                                        "name": (emp_map.get(eid) or {}).get("name"),
                                        "tracks": [], "visit_ids": [], "auto_tracks": []})
 
     for l in labels.values():
-        if l.get("verdict") == "employee" and l.get("in_track") is not None:
+        if (l.get("verdict") == "employee" and l.get("in_track") is not None
+                and l["in_track"] not in not_staff):
             g = _grp(l.get("employee_id"))
             g["tracks"].append(l["in_track"])
             g["visit_ids"].append(l["visit_id"])
@@ -134,6 +143,8 @@ def visits(window: str) -> dict:
     except Exception:
         auto = []
     for a in auto:
+        if a["track"] in not_staff:                     # user said this auto-match is wrong -> hide it
+            continue
         g = _grp(a.get("employee_id"))
         if a["track"] not in g["tracks"]:
             g["tracks"].append(a["track"])
@@ -241,6 +252,22 @@ def link(body: dict) -> dict:
     return visits(window)
 
 
+@router.post("/unstaff-track")
+def unstaff_track(body: dict) -> dict:
+    """Per-track correction: the human says ONE track in a staff group is NOT that staffer (a customer
+    the gallery mis-matched, or a wrong manual mark). Records a 'notstaff-<track>' reject -> L4 keeps
+    that track a customer and the staff overlay drops it; the rest of the group is untouched."""
+    _guard_write()
+    window = body.get("window", "")
+    _window_dir(window)
+    track = body.get("track")
+    if track is None:
+        raise HTTPException(400, "unstaff-track needs a track")
+    store.add_label(window, f"notstaff-{track}", "reject", reason="not staff", in_track=track)
+    _rerun_l4(window)
+    return visits(window)
+
+
 def _enroll_from_cache(employee_id, crop, window, track):
     """Pull the marked crop's OSNet embedding from the L4 cache (no GPU) and add it to the gallery."""
     import pickle
@@ -261,9 +288,16 @@ def _enroll_from_cache(employee_id, crop, window, track):
             pass
 
 
+def _rank_labels() -> dict:
+    """employee id -> 'Staff #N' by enrollment order (display-only; the store keeps the raw S<id>)."""
+    emps = sorted(store.list_employees(), key=lambda x: x["id"])
+    return {e["id"]: f"Staff #{i + 1}" for i, e in enumerate(emps)}
+
+
 @router.get("/employees")
 def employees() -> dict:
-    return {"employees": store.list_employees()}
+    emps = sorted(store.list_employees(), key=lambda x: x["id"])
+    return {"employees": [{**e, "code": f"Staff #{i + 1}"} for i, e in enumerate(emps)]}
 
 
 @router.post("/employees")
@@ -281,4 +315,8 @@ def rename_employee(emp_id: int, body: dict) -> dict:
 
 @router.get("/attendance")
 def attendance(store_id: str = "s14", date: str | None = None) -> dict:
-    return {"attendance": store.attendance(store_id, date)}
+    lab = _rank_labels()
+    rows = store.attendance(store_id, date)
+    for r in rows:
+        r["code"] = lab.get(r["id"], r.get("code"))
+    return {"attendance": rows}

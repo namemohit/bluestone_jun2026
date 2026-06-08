@@ -187,6 +187,7 @@ def main() -> None:
     cannot = {tuple(p) for p in feedback.get("cannot_link", [])}   # (in_track, out_track) forbidden
     must = {tuple(p) for p in feedback.get("must_link", [])}       # (in_track, out_track) forced
     employees = set(feedback.get("employees", []))                  # entry-cam tracks that are staff
+    not_staff = set(feedback.get("not_staff", []))                  # human override: NOT staff (customer)
     gallery = json.load(open(args.gallery)) if (args.gallery and os.path.exists(args.gallery)) else []
 
     events = sorted(detect_events(L1, cfg), key=lambda e: e["ts"])
@@ -234,6 +235,9 @@ def main() -> None:
             gembs = [(g["employee_id"], np.asarray(g["embedding"], dtype="float32")) for g in gallery]
             survivors = []
             for e in kept:
+                if e["track"] in not_staff:        # human said "not staff" -> stays a customer
+                    survivors.append(e)
+                    continue
                 eid, esim = None, args.staff_sim
                 if e.get("emb") is not None:
                     for gid, gemb in gembs:
