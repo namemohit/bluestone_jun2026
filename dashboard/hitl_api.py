@@ -309,6 +309,29 @@ def _point_in_poly(x, y, poly) -> bool:
     return inside
 
 
+_CROP_DIM: dict = {}   # crop path -> (w, h) px, cached; crops never change so first read sticks
+
+
+def _crop_dims(crop: str):
+    """Pixel (w, h) of a person crop, for the size filter. Reads only the image header (lazy),
+    caches by path. Crops are local to the labelling console; on the read-only Cloud Run view the
+    file is absent -> (None, None) so the filter simply doesn't hide anything."""
+    if not crop:
+        return (None, None)
+    if crop not in _CROP_DIM:
+        wh = (None, None)
+        try:
+            from PIL import Image
+            safe = os.path.normpath(crop).replace("\\", "/")
+            if safe.startswith("outputs/") and os.path.exists(safe):
+                with Image.open(safe) as im:
+                    wh = im.size
+        except Exception:
+            wh = (None, None)
+        _CROP_DIM[crop] = wh
+    return _CROP_DIM[crop]
+
+
 def _classify_detections(window: str) -> list:
     """Tag each L1 detection by disposition. Reads the local tracks.json (which keeps the full traj),
     the zone config, and visits.json + labels to build the 'already accounted for' track set.
@@ -400,8 +423,10 @@ def _classify_detections(window: str) -> list:
                     sugg = "to_review"
                 conf = ann_cat is not None                        # confirmed = a human annotation exists
                 det = ann_cat if conf else sugg
+            cropr = (t.get("crop", "") or "").replace("\\", "/")
+            cw, ch = _crop_dims(cropr)
             out.append({"camera": cam, "track": t["track"], "ist": t.get("first_ist"), "dur_s": dur,
-                        "crop": (t.get("crop", "") or "").replace("\\", "/"),
+                        "crop": cropr, "crop_w": cw, "crop_h": ch,
                         "disposition": disp, "staff": key in staff_emp, "annotation": ann_cat,
                         "parked": key in parked, "suggested": sugg, "confirmed": conf,
                         "determination": det, "employee_id": staff_emp.get(key)})

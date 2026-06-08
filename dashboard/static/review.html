@@ -474,7 +474,8 @@ async function doRerun(){
   msg.innerHTML = `<div class="delta"><b>Δ after re-run</b> · ${r.scope} · ${r.n_windows} window(s) · model v${(r.model||{}).version??'—'}
     <div class="chips" style="margin-top:6px">${cell('customers','customers')} ${cell('auto_staff','auto-staff')} ${cell('entries','door entries')} ${cell('visits','matched')}</div></div>`;
 }
-let DETS_LOADED=false, DETALL=null, DETMETA=null, DIRTY_WINS=new Set(), DETF=LS.get('detf', {cams:{C05:1,C11:1,C14:1}, minDur:0, from:'', to:''});
+let DETS_LOADED=false, DETALL=null, DETMETA=null, DIRTY_WINS=new Set(), DETF=LS.get('detf', {cams:{C05:1,C11:1,C14:1}, minDur:0, minW:0, minH:0, from:'', to:''});
+let DOPEN=new Set();   // which buckets are expanded; in-memory only -> every refresh starts all-folded, and a re-render (e.g. ticking a crop) keeps your current view instead of snapping back to To-review
 async function loadDetections(){
   DETS_LOADED = true;
   if (DAY){ $('#dets').innerHTML = '<p class="hint">All-Detections is per-hour — pick a specific hour in the dropdown to resolve detections.</p>'; return; }
@@ -488,6 +489,9 @@ async function loadDetections(){
 function inTimeRange(ist){ if (!DAY) return true; const t=(ist||'').slice(0,5); return (!DETF.from || t>=DETF.from) && (!DETF.to || t<=DETF.to); }  // only the whole-day view slices by time; a single hour is already a slice
 function toggleCam(c){ DETF.cams[c]=DETF.cams[c]?0:1; LS.set('detf',DETF); renderDets(); }
 function setMinDur(v){ DETF.minDur=parseFloat(v)||0; LS.set('detf',DETF); renderDets(); }
+function setMinW(v){ DETF.minW=parseInt(v)||0; LS.set('detf',DETF); renderDets(); }     // min crop WIDTH px (horizontal), acts on its own
+function setMinH(v){ DETF.minH=parseInt(v)||0; LS.set('detf',DETF); renderDets(); }     // min crop HEIGHT px (vertical), acts on its own
+function toggleGrp(k, head){ DOPEN.has(k) ? DOPEN.delete(k) : DOPEN.add(k); head.closest('.dgrp').classList.toggle('open'); }
 function setTimeF(which,v){ DETF[which]=v||''; LS.set('detf',DETF); renderReview(); renderDets(); }   // one slice -> both halves
 function clearTimeF(){ DETF.from=DETF.to=''; LS.set('detf',DETF); renderReview(); renderDets(); }
 const BUCKET = {
@@ -503,7 +507,8 @@ const BUCKET = {
 const OUTCOMES = ['customer','staff','passby','not_person','duplicate'];
 function renderDets(){
   if(!DETALL || !DETMETA) return;
-  const keep = a => (a||[]).filter(d=>DETF.cams[d.camera] && (d.dur_s||0)>=DETF.minDur && inTimeRange(d.ist));
+  const keep = a => (a||[]).filter(d=>DETF.cams[d.camera] && (d.dur_s||0)>=DETF.minDur
+      && (!DETF.minW || (d.crop_w||0)>=DETF.minW) && (!DETF.minH || (d.crop_h||0)>=DETF.minH) && inTimeRange(d.ist));
   const card = d => {
     const k = d.camera+'|'+d.track, isSel = SEL.has(k), det = d.determination;
     const chk = RO ? '' : `<input type="checkbox" class="dsel" ${isSel?'checked':''} title="select for bulk" onclick="event.stopPropagation();toggleSel('${d.camera}',${d.track},'${d.crop||''}')">`;
@@ -527,7 +532,7 @@ function renderDets(){
     const m=BUCKET[k]||{icon:'',title:k,note:''}, arr=kept[k]||[], conf=arr.filter(d=>d.confirmed).length;
     const unconf=arr.filter(d=>!d.confirmed && !d.parked).length;
     const confAll = (!RO && (OUTCOMES.includes(k)||k==='inside') && unconf) ? `<button class="confallbtn" onclick="event.stopPropagation();confirmAllShown('${k}','${k==='inside'?'duplicate':k}')">✓ ${k==='inside'?'all already counted':'confirm all shown'} (${unconf})</button>` : '';
-    return `<div class="dgrp ${k==='to_review'?'open':''}"><div class="ddhead" onclick="this.closest('.dgrp').classList.toggle('open')"><b>${m.icon} ${m.title} · ${conf}/${arr.length}</b> <span class="hint">${m.note}</span> ${confAll}</div><div class="dbody"><div class="mini">${arr.map(card).join('')||'<p class="empty">none</p>'}</div></div></div>`;
+    return `<div class="dgrp ${DOPEN.has(k)?'open':''}"><div class="ddhead" onclick="toggleGrp('${k}',this)"><b>${m.icon} ${m.title} · ${conf}/${arr.length}</b> <span class="hint">${m.note}</span> ${confAll}</div><div class="dbody"><div class="mini">${arr.map(card).join('')||'<p class="empty">none</p>'}</div></div></div>`;
   };
   const denom = DETALL.filter(d=>d.determination!=='inside').length;   // Inside = auto-handled, off the critical path
   const totalConf = DETALL.filter(d=>d.confirmed).length;
@@ -548,6 +553,8 @@ function renderDets(){
      <div class="detf">filter: ${['C05','C11','C14'].map(c=>`<label><input type="checkbox" ${DETF.cams[c]?'checked':''} onchange="toggleCam('${c}')"> ${c}</label>`).join(' ')}
        &nbsp;·&nbsp; <span class="hint">tick crops to multi-select</span>
        &nbsp;·&nbsp; hide &lt; <input type="number" value="${DETF.minDur}" min="0" step="1" style="width:46px" onchange="setMinDur(this.value)">s
+       &nbsp;·&nbsp; min crop <input type="number" value="${DETF.minW||0}" min="0" step="10" title="hide crops narrower than this many px (horizontal)" style="width:54px" onchange="setMinW(this.value)">w
+       × <input type="number" value="${DETF.minH||0}" min="0" step="10" title="hide crops shorter than this many px (vertical)" style="width:54px" onchange="setMinH(this.value)">h px
        &nbsp;·&nbsp; <b>showing ${shown}</b> of ${DETMETA.total}</div>`
     + DETMETA.order.map(grpB).join('');
 }
@@ -670,7 +677,8 @@ async function bulkAllocate(category, empId){
 async function confirmAllShown(key, writeCat){   // confirm every visible unconfirmed card in a bucket; writeCat lets Inside write 'duplicate'
   writeCat = writeCat || key;
   if (!DETALL) return;
-  const keepF = d => DETF.cams[d.camera] && (d.dur_s||0)>=DETF.minDur && inTimeRange(d.ist);
+  const keepF = d => DETF.cams[d.camera] && (d.dur_s||0)>=DETF.minDur
+      && (!DETF.minW || (d.crop_w||0)>=DETF.minW) && (!DETF.minH || (d.crop_h||0)>=DETF.minH) && inTimeRange(d.ist);
   const vis = DETALL.filter(d=>d.determination===key && !d.confirmed && !d.parked && keepF(d));
   if (!vis.length) return;
   const items = vis.map(d=>({camera:d.camera, track:d.track, crop:d.crop}));
