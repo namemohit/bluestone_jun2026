@@ -277,13 +277,13 @@ def detections(window: str, grouped: int = 0) -> dict:
         dets = _classify_detections(window)
     except Exception:
         return {"grouped": False, "detections": store.get_detections(window)}
-    buckets: dict = {"door": [], "inside": [], "accounted": [], "street": []}
+    buckets: dict = {"parked": [], "door": [], "inside": [], "accounted": [], "street": []}
     for d in dets:
-        buckets[d["disposition"]].append(d)
+        buckets["parked" if d.get("parked") else d["disposition"]].append(d)
     for k in buckets:
         buckets[k].sort(key=lambda x: x.get("ist") or "")
     return {"grouped": True, "total": len(dets),
-            "resolved": sum(1 for d in dets if d.get("annotation")), **buckets,
+            "resolved": sum(1 for d in dets if d.get("annotation") and not d.get("parked")), **buckets,
             "counts": {k: len(v) for k, v in buckets.items()}}
 
 
@@ -344,6 +344,7 @@ def _classify_detections(window: str) -> list:
             staff_ct.add(("C05", l["in_track"]))
 
     ann = {(a["camera"], a["track"]): a for a in store.latest_annotations(window)}  # human allocations
+    parked = _parked_set(window)                                                    # held for later review
     dirs = [(wcfg.get("l1"), "C05")] + [(d, Path(d).name.replace("L1_", "")) for d in wcfg.get("interior", [])]
     out = []
     for d, cam in dirs:
@@ -365,7 +366,8 @@ def _classify_detections(window: str) -> list:
                         "dur_s": round(t.get("last_ts", 0) - t.get("first_ts", 0), 1),
                         "crop": (t.get("crop", "") or "").replace("\\", "/"),
                         "disposition": disp, "staff": key in staff_ct,
-                        "annotation": (ann.get(key) or {}).get("category")})
+                        "annotation": (ann.get(key) or {}).get("category"),
+                        "parked": key in parked})
     return out
 
 
@@ -713,6 +715,7 @@ def allocate(body: dict) -> dict:
         raise HTTPException(400, "allocate needs a track and a valid category")
     if _alloc_one(window, camera, track, category, crop, emp_id, body.get("duplicate_of")):
         _rerun_l4(window)
+    _unpark(window, [(camera, track)])      # a decision releases any hold
     return {"ok": True}  # the All-Detections section reloads its own grouped data
 
 
@@ -738,7 +741,61 @@ def allocate_bulk(body: dict) -> dict:
         n += 1
     if touched:
         _rerun_l4(window)                                      # ONE re-run for the whole batch
+    _unpark(window, [(it.get("camera", ""), it["track"]) for it in items if it.get("track") is not None])
     return {"ok": True, "n": n}
+
+
+def _parked_path(window) -> Path:
+    return _window_dir(window) / "parked.json"
+
+
+def _parked_set(window) -> set:
+    """(camera, track) pairs held for later review — local review scratch, NOT a training annotation."""
+    p = _parked_path(window)
+    if not p.exists():
+        return set()
+    try:
+        return {(c, int(t)) for c, t in json.loads(p.read_text(encoding="utf-8"))}
+    except Exception:
+        return set()
+
+
+def _park_write(window, s) -> None:
+    _parked_path(window).write_text(json.dumps(sorted([[c, t] for c, t in s])), encoding="utf-8")
+
+
+def _unpark(window, keys) -> None:
+    s = _parked_set(window)
+    if not s:
+        return
+    before = len(s)
+    for k in keys:
+        s.discard((k[0], int(k[1])))
+    if len(s) != before:
+        _park_write(window, s)
+
+
+@router.post("/park")
+def park(body: dict) -> dict:
+    """Hold detections for later review (on=true) or release them (on=false). Parked detections move
+    to their own group at the top and drop out of the resolved count until decided. A decision
+    (allocate) auto-releases the hold."""
+    _guard_write()
+    window = body.get("window", "")
+    _window_dir(window)
+    on = bool(body.get("on", True))
+    s = _parked_set(window)
+    for it in body.get("items", []):
+        track = it.get("track")
+        if track is None:
+            continue
+        key = (it.get("camera", ""), int(track))
+        if on:
+            s.add(key)
+        else:
+            s.discard(key)
+    _park_write(window, s)
+    return {"ok": True, "parked": len(s)}
 
 
 def _enroll_from_cache(employee_id, crop, window, track):

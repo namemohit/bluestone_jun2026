@@ -123,6 +123,7 @@
   .dsel { position:absolute; top:5px; left:5px; z-index:3; width:17px; height:17px; cursor:pointer; accent-color:var(--accent); }
   .framebtn { position:absolute; top:3px; right:3px; z-index:3; padding:1px 5px; font-size:13px; line-height:1.5; background:rgba(0,0,0,.55); border:1px solid var(--line); border-radius:6px; cursor:pointer; }
   .framebtn:hover { border-color:var(--accent); }
+  .amenu button.parked { background:var(--warn); color:#1a1206; border-color:var(--warn); }
   .dcard.selected { outline:2px solid var(--accent); outline-offset:-1px; }
   .bulkbar { display:flex; align-items:center; gap:7px; flex-wrap:wrap; background:rgba(76,141,255,.13); border:1px solid var(--accent); border-radius:10px; padding:9px 13px; margin:10px 0; font-size:13px; position:sticky; top:6px; z-index:6; }
   .amenu { display:flex; gap:1px; justify-content:center; margin-top:5px; flex-wrap:wrap; }
@@ -488,11 +489,12 @@ function renderDets(){
       <button title="Staff" onclick="openStaffPicker('det-${d.camera}-${d.track}',${d.track},'${d.crop||''}','${d.camera}')">👤</button>
       <button title="Not a person" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','not_person')">🚫</button>
       <button title="Passed by" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','passby')">🚶</button>
-      <button title="Duplicate" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','duplicate')">🔁</button></div>`;
+      <button title="Duplicate" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','duplicate')">🔁</button>
+      <button title="${d.parked?'Release hold':'Park — review later'}" class="${d.parked?'parked':''}" onclick="park('${d.camera}',${d.track},${!d.parked})">🅿️</button></div>`;
     return `<div class="ev dcard ${a?'resolved':''} ${isSel?'selected':''}">${chk}${frameBtn}${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}</div>${badge}${menu}</div>`;
   };
-  const door=keep(r.door), inside=keep(r.inside), acc=keep(r.accounted), st=keep(r.street);
-  const shown = door.length+inside.length+acc.length+st.length;
+  const parked=keep(r.parked||[]), door=keep(r.door), inside=keep(r.inside), acc=keep(r.accounted), st=keep(r.street);
+  const shown = parked.length+door.length+inside.length+acc.length+st.length;
   const grp = (icon,title,arr,note,open) => `<div class="dgrp ${open?'open':''}"><div class="ddhead" onclick="this.closest('.dgrp').classList.toggle('open')"><b>${icon} ${title} · ${arr.length}</b> <span class="hint">${note}</span></div><div class="dbody"><div class="mini">${arr.map(card).join('')||'<p class="empty">none</p>'}</div></div></div>`;
   $('#detsHead').textContent = `All detections — reconciliation: did we miss anyone? · ${r.total} total`;
   const prog = r.total ? Math.round(100*(r.resolved||0)/r.total) : 0;
@@ -502,14 +504,16 @@ function renderDets(){
        <button onclick="bulkAllocate('not_person')">🚫 Not a person</button>
        <button onclick="bulkAllocate('passby')">🚶 Pass-by</button>
        <button onclick="bulkAllocate('duplicate')">🔁 Duplicate</button>
+       <button onclick="bulkPark()">🅿️ Park for later</button>
        <button class="no" onclick="clearSelDets()">clear</button></div>` : '';
   $('#dets').innerHTML =
-    `<div class="prog"><b>Closing the day</b> — ${r.resolved||0} / ${r.total} resolved<div class="pbar"><i style="width:${prog}%"></i></div></div>
+    `<div class="prog"><b>Closing the day</b> — ${r.resolved||0} / ${r.total} resolved${(r.counts&&r.counts.parked)?` · <b style="color:var(--warn)">${r.counts.parked}</b> parked for later`:''}<div class="pbar"><i style="width:${prog}%"></i></div></div>
      ${bulkbar}
      <div class="detf">filter: ${['C05','C11','C14'].map(c=>`<label><input type="checkbox" ${DETF.cams[c]?'checked':''} onchange="toggleCam('${c}')"> ${c}</label>`).join(' ')}
        &nbsp;·&nbsp; <span class="hint">tick crops to multi-select, then bulk-allocate above</span>
        &nbsp;·&nbsp; hide &lt; <input type="number" value="${DETF.minDur}" min="0" step="1" style="width:46px" onchange="setMinDur(this.value)">s
        &nbsp;·&nbsp; <b>showing ${shown}</b> of ${r.total}</div>`
+    + (parked.length ? grp('🅿️','Parked — review later',parked,'held for a second look — decide when ready (📷 helps)',true) : '')
     + grp('🚪','At the door — not counted',door,'possible MISSED entries — review these',true)
     + grp('🏠','Inside — not matched to a visit',inside,'interior presence (mostly tracker fragments; raise the duration filter)',false)
     + grp('✅','Already counted',acc,'already shown in the Review tab',false)
@@ -615,6 +619,17 @@ async function bulkAllocate(category, empId){
   showToast(`${items.length} crops → ${ALLOC[category]||category}`, null);
   SEL.clear();
   refreshAll();   // one re-run already happened server-side; refresh results + buckets together
+}
+async function park(camera, track, on){
+  await fetch('/api/hitl/park',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({window:WIN, on, items:[{camera, track}]})}).then(r=>r.json());
+  loadDetections();   // park only moves it between buckets — no Review re-run needed
+}
+async function bulkPark(){
+  const items=[...SEL.values()];
+  if(!items.length) return;
+  await fetch('/api/hitl/park',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({window:WIN, on:true, items})}).then(r=>r.json());
+  showToast(`${items.length} crops parked for later`, null);
+  SEL.clear(); loadDetections();
 }
 async function allocate(camera, track, crop, category){
   await fetch('/api/hitl/allocate',{method:'POST',headers:{'Content-Type':'application/json'},
