@@ -163,6 +163,13 @@ def main() -> None:
     ap.add_argument("--staff-sim", type=float, default=0.6,
                     help="cosine-sim threshold for gallery auto-recognition (tune if a customer is "
                          "mis-tagged or a known staffer is missed)")
+    ap.add_argument("--customer-sim", type=float, default=0.65,
+                    help="cosine floor to auto-link a leftover interior track to its door ENTRY "
+                         "(customer). Stricter than --staff-sim: no curated gallery, door<->interior gap.")
+    ap.add_argument("--customer-margin", type=float, default=0.08,
+                    help="best minus runner-up entry sim required to accept a customer link (anti-merge).")
+    ap.add_argument("--customer-window", type=float, default=60.0,
+                    help="max seconds between a door IN and an interior track's first frame to link them.")
     ap.add_argument("--out", default="outputs/L4_visits")
     args = ap.parse_args()
     try:
@@ -189,6 +196,7 @@ def main() -> None:
     employees = set(feedback.get("employees", []))                  # entry-cam tracks that are staff
     not_staff = set(feedback.get("not_staff", []))                  # human override: NOT staff (customer)
     false_tracks = set(feedback.get("false", []))                   # not-a-person / pass-by -> not a customer
+    not_customer = {tuple(p) for p in feedback.get("not_customer", [])}  # (cam,track) human veto of an auto customer-link
     gallery = json.load(open(args.gallery)) if (args.gallery and os.path.exists(args.gallery)) else []
 
     events = sorted(detect_events(L1, cfg), key=lambda e: e["ts"])
@@ -201,6 +209,7 @@ def main() -> None:
             continue
         kept.append(e)
     auto_staff = []  # gallery-recognised staff (source='auto'); dropped from customer visits below
+    customer_links = []  # leftover interior tracks auto-linked to their door ENTRY (already-counted customers)
     if args.interior:
         # v2: bridge each door event to its clean interior crop (OSNet-picked), match on those
         from stack.l5_bridge import load_interior
@@ -253,6 +262,39 @@ def main() -> None:
                 else:
                     survivors.append(e)
             kept = survivors
+        # --- customer cross-camera bridge: link a LEFTOVER interior track to its door ENTRY by appearance
+        # (interior-emb <-> the entry's bridged interior-emb -> same person), so already-counted customers
+        # seen inside leave the unmatched pool. Conservative: high floor + runner-up margin + greedy 1:1.
+        # Counts are untouched -- entries are counted at C05; this only marks the interior track accounted.
+        claimed_int = {e.get("int_crop") for e in kept if e.get("int_crop")}
+        claimed_int |= {s["crop"] for s in auto_staff}
+        in_events = [e for e in kept if e["dir"] == "in" and e.get("emb") is not None]
+        cpairs = []                                                # (sim, margin, it_idx, in_event)
+        for i, it in enumerate(interior):
+            if it["emb"] is None or it["crop"] in claimed_int or (it["cam"], it["track"]) in not_customer:
+                continue
+            scored = [(reid.osnet_sim(it["emb"], e["emb"]), e) for e in in_events
+                      if -args.skew <= (it["first"] - e["ts"]) <= args.customer_window]   # interior at/after entry
+            if not scored:
+                continue
+            scored.sort(key=lambda z: z[0], reverse=True)
+            best_sim, best_e = scored[0]
+            second = scored[1][0] if len(scored) > 1 else 0.0
+            if best_sim >= args.customer_sim and (best_sim - second) >= args.customer_margin:
+                cpairs.append((best_sim, best_sim - second, i, best_e))
+        cpairs.sort(key=lambda z: z[0], reverse=True)             # strongest links claim first
+        used_int, used_in = set(), set()
+        for sim, margin, i, e in cpairs:
+            if i in used_int or e["track"] in used_in:            # one interior track <-> one entry
+                continue
+            used_int.add(i); used_in.add(e["track"])
+            it = interior[i]
+            customer_links.append({"in_track": e["track"], "in_ist": ist(e["ts"]),
+                                   "cam": it["cam"], "track": it["track"],
+                                   "int_crop": it["crop"].replace("\\", "/"),
+                                   "door_crop": e["crop"].replace("\\", "/"),
+                                   "sim": round(float(sim), 3), "margin": round(float(margin), 3),
+                                   "source": "auto_customer"})
     else:
         for e in kept:
             e["emb"] = embed_fn(cv2.imread(e["crop"]))
@@ -330,7 +372,7 @@ def main() -> None:
                              "employees": len(employees)},
         "counts": {"visits": len(visits), "still_inside": len(still_inside),
                    "pre_window_exits": len(unmatched_out), "peak_occupancy": peak,
-                   "auto_staff": len(auto_staff)},
+                   "auto_staff": len(auto_staff), "customer_links": len(customer_links)},
         "visits": [{"id": v["id"], "in_track": v["in_track"], "out_track": v["out_track"],
                     "in_ist": ist(v["in"]), "out_ist": ist(v["out"]),
                     "dwell_s": round(v["dwell"], 1), "how": v["how"],
@@ -349,6 +391,8 @@ def main() -> None:
                              for e in sorted(unmatched_out, key=lambda z: z["ts"])],
         # gallery-recognised staff this window (employee_id set) -> attendance, no manual click
         "staff": sorted(auto_staff, key=lambda z: z["ist"]),
+        # interior tracks auto-linked to their door entry (already-counted customers seen inside)
+        "links": sorted(customer_links, key=lambda z: z["in_ist"]),
     }
     with open(os.path.join(args.out, "visits.json"), "w", encoding="utf-8") as f:
         json.dump(visits_json, f, indent=2)

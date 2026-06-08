@@ -283,7 +283,7 @@ def detections(window: str, grouped: int = 0) -> dict:
             eid = d.get("employee_id")
             if eid:
                 d["staff_name"] = (rank.get(eid) or f"#{eid}") + (" · " + names[eid] if names.get(eid) else "")
-    order = ["to_review", "customer", "staff", "passby", "not_person", "duplicate", "on_hold"]
+    order = ["to_review", "customer", "staff", "passby", "not_person", "duplicate", "inside", "on_hold"]
     buckets: dict = {k: [] for k in order}
     for d in dets:
         buckets.setdefault(d.get("determination", "to_review"), []).append(d)
@@ -293,6 +293,8 @@ def detections(window: str, grouped: int = 0) -> dict:
                       "total": len(buckets.get(k, []))} for k in order}
     return {"grouped": True, "total": len(dets), "order": order, "buckets": buckets,
             "per_bucket": per_bucket, "confirmed": sum(1 for d in dets if d.get("confirmed")),
+            # 'inside' = auto-handled (already counted at the door) -> excluded from the close-the-day denominator
+            "close_total": sum(1 for d in dets if d.get("determination") != "inside"),
             "counts": {k: len(buckets.get(k, [])) for k in order}}
 
 
@@ -343,6 +345,9 @@ def _classify_detections(window: str) -> list:
         if camtrack(st.get("crop")):
             accounted.add(camtrack(st.get("crop")))
             staff_emp[camtrack(st.get("crop"))] = st.get("employee_id")
+    for l in vj.get("links", []):                               # interior auto-linked to its door entry
+        accounted.add(("C05", l["in_track"]))
+        accounted.add((l["cam"], l["track"]))                   # the interior track -> accounted (suggested customer)
     labels = store.get_labels(window)
     not_staff = {l["in_track"] for l in labels
                  if str(l.get("visit_id", "")).startswith("notstaff-") and l.get("verdict") == "reject"
@@ -390,7 +395,7 @@ def _classify_detections(window: str) -> list:
                     span = ((max((p[1] for p in traj), default=0) - min((p[1] for p in traj), default=0))
                             + (max((p[2] for p in traj), default=0) - min((p[2] for p in traj), default=0))) if traj else 0.0
                     noise = nfr <= 4 and (pconf < 0.55 or maxw < 0.06 or span < 0.02)
-                    sugg = "not_person" if noise else "to_review"
+                    sugg = "not_person" if noise else "inside"   # real interior, not matched -> Inside bucket
                 else:                                             # door -> the human must decide enter/pass
                     sugg = "to_review"
                 conf = ann_cat is not None                        # confirmed = a human annotation exists

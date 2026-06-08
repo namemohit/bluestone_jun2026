@@ -497,6 +497,7 @@ const BUCKET = {
   passby:   {icon:'🚶',title:'Passed by',note:'walked past — not counted'},
   not_person:{icon:'🚫',title:'Not a person',note:'noise / tracker fragments'},
   duplicate:{icon:'🔁',title:'Duplicate',note:'same person, another track'},
+  inside:   {icon:'🏠',title:'Inside',note:'seen inside — already counted at the door (not blocking the close)'},
   on_hold:  {icon:'🅿️',title:'On hold',note:'held for later — decide when ready'},
 };
 const OUTCOMES = ['customer','staff','passby','not_person','duplicate'];
@@ -515,6 +516,7 @@ function renderDets(){
     if (det==='on_hold') head = `<div class="dtag hold">🅿️ on hold</div>`;
     else if (d.confirmed) head = `<div class="adone">✓ ${lbl}</div>`;
     else if (OUTCOMES.includes(det)) head = RO ? `<div class="dtag sugg">${(det==='staff'&&d.staff_name)?d.staff_name+'?':'suggested'}</div>` : `${nameTag}<button class="confirmbtn" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','${det}')">✓ confirm</button>`;
+    else if (det==='inside') head = RO ? `<div class="dtag sugg">already inside</div>` : `<button class="confirmbtn" title="already counted at the door" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','duplicate')">✓ already counted</button>`;
     return `<div class="ev dcard ${d.confirmed?'resolved':''} ${isSel?'selected':''}">${chk}${frameBtn}${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}</div>${head}${menu}</div>`;
   };
   const byB={}; DETMETA.order.forEach(k=>byB[k]=[]);
@@ -524,11 +526,12 @@ function renderDets(){
   const grpB = (k) => {
     const m=BUCKET[k]||{icon:'',title:k,note:''}, arr=kept[k]||[], conf=arr.filter(d=>d.confirmed).length;
     const unconf=arr.filter(d=>!d.confirmed && !d.parked).length;
-    const confAll = (!RO && OUTCOMES.includes(k) && unconf) ? `<button class="confallbtn" onclick="event.stopPropagation();confirmAllShown('${k}')">✓ confirm all shown (${unconf})</button>` : '';
+    const confAll = (!RO && (OUTCOMES.includes(k)||k==='inside') && unconf) ? `<button class="confallbtn" onclick="event.stopPropagation();confirmAllShown('${k}','${k==='inside'?'duplicate':k}')">✓ ${k==='inside'?'all already counted':'confirm all shown'} (${unconf})</button>` : '';
     return `<div class="dgrp ${k==='to_review'?'open':''}"><div class="ddhead" onclick="this.closest('.dgrp').classList.toggle('open')"><b>${m.icon} ${m.title} · ${conf}/${arr.length}</b> <span class="hint">${m.note}</span> ${confAll}</div><div class="dbody"><div class="mini">${arr.map(card).join('')||'<p class="empty">none</p>'}</div></div></div>`;
   };
+  const denom = DETALL.filter(d=>d.determination!=='inside').length;   // Inside = auto-handled, off the critical path
   const totalConf = DETALL.filter(d=>d.confirmed).length;
-  const prog = DETMETA.total ? Math.round(100*totalConf/DETMETA.total) : 0;
+  const prog = denom ? Math.round(100*totalConf/denom) : 0;
   const stale = DIRTY_WINS.has(WIN) ? ` · <span class="stalehint">⚠ count may be stale — <button onclick="recompute()">↻ recompute</button></span>` : '';
   const bulkbar = SEL.size ? `<div class="bulkbar"><b>${SEL.size} selected</b> → set all to:
        <button onclick="bulkAllocate('customer')">🛍️ Customer</button>
@@ -540,7 +543,7 @@ function renderDets(){
        <button class="no" onclick="clearSelDets()">clear</button></div>` : '';
   $('#detsHead').textContent = `All detections — reconciliation: did we miss anyone? · ${DETMETA.total} total`;
   $('#dets').innerHTML =
-    `<div class="prog"><b>Closing the day</b> — ${totalConf} / ${DETMETA.total} confirmed${stale}<div class="pbar"><i style="width:${prog}%"></i></div></div>
+    `<div class="prog"><b>Closing the day</b> — ${totalConf} / ${denom} confirmed${stale}<div class="pbar"><i style="width:${prog}%"></i></div></div>
      ${bulkbar}
      <div class="detf">filter: ${['C05','C11','C14'].map(c=>`<label><input type="checkbox" ${DETF.cams[c]?'checked':''} onchange="toggleCam('${c}')"> ${c}</label>`).join(' ')}
        &nbsp;·&nbsp; <span class="hint">tick crops to multi-select</span>
@@ -664,15 +667,16 @@ async function bulkAllocate(category, empId){
   const body = {window:WIN, category, items}; if (empId) body.employee_id = empId;
   markStale(await fetch('/api/hitl/allocate-bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).catch(()=>null));
 }
-async function confirmAllShown(key){   // accept the auto-suggestion for every visible unconfirmed card in a bucket
+async function confirmAllShown(key, writeCat){   // confirm every visible unconfirmed card in a bucket; writeCat lets Inside write 'duplicate'
+  writeCat = writeCat || key;
   if (!DETALL) return;
   const keepF = d => DETF.cams[d.camera] && (d.dur_s||0)>=DETF.minDur && inTimeRange(d.ist);
   const vis = DETALL.filter(d=>d.determination===key && !d.confirmed && !d.parked && keepF(d));
   if (!vis.length) return;
   const items = vis.map(d=>({camera:d.camera, track:d.track, crop:d.crop}));
-  items.forEach(s=>applyDetLocal(s.camera, s.track, key)); renderDets();   // INSTANT
-  showToast(`confirmed ${items.length} → ${ALLOC[key]||key}`, null);
-  markStale(await fetch('/api/hitl/allocate-bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({window:WIN, category:key, items})}).then(r=>r.json()).catch(()=>null));
+  items.forEach(s=>applyDetLocal(s.camera, s.track, writeCat)); renderDets();   // INSTANT (Inside -> Duplicate)
+  showToast(`confirmed ${items.length} → ${ALLOC[writeCat]||writeCat}`, null);
+  markStale(await fetch('/api/hitl/allocate-bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({window:WIN, category:writeCat, items})}).then(r=>r.json()).catch(()=>null));
 }
 async function park(camera, track, on){
   applyParkLocal(camera, track, on); renderDets();   // INSTANT
