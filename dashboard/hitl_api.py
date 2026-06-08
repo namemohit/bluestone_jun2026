@@ -277,14 +277,17 @@ def detections(window: str, grouped: int = 0) -> dict:
         dets = _classify_detections(window)
     except Exception:
         return {"grouped": False, "detections": store.get_detections(window)}
-    buckets: dict = {"parked": [], "door": [], "inside": [], "accounted": [], "street": []}
+    order = ["to_review", "customer", "staff", "passby", "not_person", "duplicate", "on_hold"]
+    buckets: dict = {k: [] for k in order}
     for d in dets:
-        buckets["parked" if d.get("parked") else d["disposition"]].append(d)
+        buckets.setdefault(d.get("determination", "to_review"), []).append(d)
     for k in buckets:
         buckets[k].sort(key=lambda x: x.get("ist") or "")
-    return {"grouped": True, "total": len(dets),
-            "resolved": sum(1 for d in dets if d.get("annotation") and not d.get("parked")), **buckets,
-            "counts": {k: len(v) for k, v in buckets.items()}}
+    per_bucket = {k: {"confirmed": sum(1 for d in buckets.get(k, []) if d.get("confirmed")),
+                      "total": len(buckets.get(k, []))} for k in order}
+    return {"grouped": True, "total": len(dets), "order": order, "buckets": buckets,
+            "per_bucket": per_bucket, "confirmed": sum(1 for d in dets if d.get("confirmed")),
+            "counts": {k: len(buckets.get(k, [])) for k in order}}
 
 
 def _point_in_poly(x, y, poly) -> bool:
@@ -362,12 +365,26 @@ def _classify_detections(window: str) -> list:
                 disp = "door"       # at the door, not counted -> possible missed entry (review focus)
             else:
                 disp = "inside"     # interior, not matched to a visit -> who was in the store
-            out.append({"camera": cam, "track": t["track"], "ist": t.get("first_ist"),
-                        "dur_s": round(t.get("last_ts", 0) - t.get("first_ts", 0), 1),
+            dur = round(t.get("last_ts", 0) - t.get("first_ts", 0), 1)
+            ann_cat = (ann.get(key) or {}).get("category")
+            if key in parked:                                     # held -> on_hold (a decision auto-unparks)
+                sugg, conf, det = "on_hold", False, "on_hold"
+            else:
+                if disp == "accounted":
+                    sugg = "staff" if key in staff_ct else "customer"
+                elif disp == "street":
+                    sugg = "passby"
+                elif disp == "inside":
+                    sugg = "not_person" if dur < 3.0 else "to_review"   # short interior = tracker fragment
+                else:                                             # door -> the human must decide enter/pass
+                    sugg = "to_review"
+                conf = ann_cat is not None                        # confirmed = a human annotation exists
+                det = ann_cat if conf else sugg
+            out.append({"camera": cam, "track": t["track"], "ist": t.get("first_ist"), "dur_s": dur,
                         "crop": (t.get("crop", "") or "").replace("\\", "/"),
-                        "disposition": disp, "staff": key in staff_ct,
-                        "annotation": (ann.get(key) or {}).get("category"),
-                        "parked": key in parked})
+                        "disposition": disp, "staff": key in staff_ct, "annotation": ann_cat,
+                        "parked": key in parked, "suggested": sugg, "confirmed": conf,
+                        "determination": det})
     return out
 
 
@@ -713,10 +730,11 @@ def allocate(body: dict) -> dict:
     category, crop, emp_id = body.get("category", ""), body.get("crop"), body.get("employee_id")
     if track is None or category not in _ALLOC_CATS:
         raise HTTPException(400, "allocate needs a track and a valid category")
-    if _alloc_one(window, camera, track, category, crop, emp_id, body.get("duplicate_of")):
-        _rerun_l4(window)
+    touched = _alloc_one(window, camera, track, category, crop, emp_id, body.get("duplicate_of"))
     _unpark(window, [(camera, track)])      # a decision releases any hold
-    return {"ok": True}  # the All-Detections section reloads its own grouped data
+    # NB: the bucket move is annotation-driven (instant, client-side); the customer COUNT is refreshed
+    # lazily via POST /recompute, so a click never blocks on the ~1-5s L4 re-run.
+    return {"ok": True, "stale": touched}   # stale=True (a C05 track) -> the count needs a recompute
 
 
 @router.post("/allocate-bulk")
@@ -739,10 +757,20 @@ def allocate_bulk(body: dict) -> dict:
                       emp_id, it.get("duplicate_of")):
             touched = True
         n += 1
-    if touched:
-        _rerun_l4(window)                                      # ONE re-run for the whole batch
     _unpark(window, [(it.get("camera", ""), it["track"]) for it in items if it.get("track") is not None])
-    return {"ok": True, "n": n}
+    return {"ok": True, "n": n, "stale": touched}              # count recomputed lazily via /recompute
+
+
+@router.post("/recompute")
+def recompute(body: dict) -> dict:
+    """Refresh the customer COUNT for a window after annotation edits (the bucket moves are already
+    live; this just re-runs L2-L4 to refresh the headline number). Deliberate + synchronous — the one
+    place L4 runs after a reconciliation edit, so per-click stays instant and visits.json never races."""
+    _guard_write()
+    window = body.get("window", "")
+    _window_dir(window)
+    _rerun_l4(window)
+    return {"ok": True, **_window_counts(window)}
 
 
 def _parked_path(window) -> Path:
