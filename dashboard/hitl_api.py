@@ -919,7 +919,15 @@ def _rank_labels() -> dict:
 @router.get("/employees")
 def employees() -> dict:
     emps = sorted(store.list_employees(), key=lambda x: x["id"])
-    return {"employees": [{**e, "code": f"Staff #{i + 1}"} for i, e in enumerate(emps)]}
+    thumb: dict = {}
+    try:                                   # a representative enrolled crop per staffer, for the picker thumbnails
+        for g in store.get_gallery():
+            if g.get("employee_id") and g.get("crop_url"):
+                thumb.setdefault(g["employee_id"], g["crop_url"])
+    except Exception:
+        pass
+    return {"employees": [{**e, "code": f"Staff #{i + 1}", "crop": thumb.get(e["id"])}
+                          for i, e in enumerate(emps)]}
 
 
 @router.post("/employees")

@@ -78,9 +78,11 @@
   .modalbox { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; min-width:300px; max-width:90vw; }
   .modalbox h3 { font-size:15px; }
   .emplist { display:flex; flex-direction:column; gap:6px; max-height:50vh; overflow:auto; }
-  .empbtn { text-align:left; background:#202732; }
+  .empbtn { text-align:left; background:#202732; display:flex; align-items:center; gap:8px; }
   .empbtn:hover { border-color:var(--ok); }
-  .empbtn img { height:54px; border-radius:5px; vertical-align:middle; margin-right:8px; }
+  .empbtn img { height:54px; width:40px; object-fit:cover; border-radius:5px; vertical-align:middle; }
+  .empbtn .empthumb { height:54px; width:40px; display:inline-flex; align-items:center; justify-content:center; background:#2a323d; border-radius:5px; font-size:22px; }
+  .bigcrop { max-height:190px; max-width:100%; border-radius:8px; display:block; margin:0 auto 12px; border:2px solid var(--ok); }
   .lbox { position:fixed; inset:0; background:rgba(0,0,0,.9); display:none; align-items:center;
           justify-content:center; z-index:50; cursor:zoom-out; }
   .lbox.show { display:flex; }
@@ -212,6 +214,7 @@
 <div id="lightbox" class="lbox" onclick="closeZoom()"><div class="cap">click anywhere or press Esc to close</div><img id="lbimg"></div>
 <div id="staffModal" class="modal"><div class="modalbox">
   <h3 style="margin:0 0 10px">Assign to staff member</h3>
+  <div id="empPick"></div>
   <div id="empList" class="emplist"></div>
   <div style="margin-top:12px;display:flex;gap:8px">
     <button class="ok" onclick="createStaff()">➕ New staff</button>
@@ -614,8 +617,14 @@ async function label(id,verdict,inT,outT,win){
 let pickCtx = null;
 async function _openEmpModal(){
   const r = await fetch('/api/hitl/employees').then(r=>r.json());
-  $('#empList').innerHTML = (r.employees||[]).map(e=>`<button class="empbtn" onclick="assignStaff(${e.id})">${e.code}${e.name?' · '+e.name:''}</button>`).join('')
-      || '<p class="empty">No staff yet — create the first one below.</p>';
+  const ctxCrop = pickCtx && pickCtx.crop, ctxTrack = pickCtx && pickCtx.track;
+  $('#empPick').innerHTML = (ctxCrop && !HIDE)   // show WHO is being assigned, enlarged, to match against the thumbnails
+    ? `<div class="hint" style="margin-bottom:6px">Who is this${ctxTrack?` (sighting #${ctxTrack})`:''}? Match the face below:</div><img src="${cropURL(ctxCrop)}" class="bigcrop">`
+    : '';
+  $('#empList').innerHTML = (r.employees||[]).map(e=>{
+    const t = (e.crop && !HIDE) ? `<img src="${cropURL(e.crop)}">` : '<span class="empthumb">👤</span>';   // each staffer's enrolled face
+    return `<button class="empbtn" onclick="assignStaff(${e.id})">${t}${e.code}${e.name?' · '+e.name:''}</button>`;
+  }).join('') || '<p class="empty">No staff yet — create the first one below.</p>';
   $('#staffModal').classList.add('show');
 }
 async function openStaffPicker(visitId, track, crop, camera, win){
