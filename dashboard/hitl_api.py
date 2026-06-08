@@ -616,21 +616,15 @@ def training() -> dict:
             "published": store.list_published()}
 
 
-@router.post("/allocate")
-def allocate(body: dict) -> dict:
-    """Close-the-day: a human assigns ONE detection to a category. Always records a durable annotation
-    (ground truth + training crop); for door (C05) tracks it also writes the matcher label so the
-    customer count respects it (staff -> employee; not-a-person/pass-by/duplicate -> false_detection;
-    customer -> clear any drop)."""
-    _guard_write()
-    window = body.get("window", "")
-    _window_dir(window)
-    camera, track = body.get("camera", ""), body.get("track")
-    category, crop, emp_id = body.get("category", ""), body.get("crop"), body.get("employee_id")
-    if track is None or category not in ("customer", "staff", "not_person", "passby", "duplicate"):
-        raise HTTPException(400, "allocate needs a track and a valid category")
+_ALLOC_CATS = ("customer", "staff", "not_person", "passby", "duplicate")
+
+
+def _alloc_one(window, camera, track, category, crop, emp_id, duplicate_of=None) -> bool:
+    """Record ONE allocation — durable annotation (+ training crop) and, for a door (C05) track, the
+    matcher label that drives the count. Does NOT re-run L4. Returns True if it touched a C05 track
+    (so the caller knows an L4 re-run is needed)."""
     store.add_annotation(window, camera, track, category, crop_url=crop, employee_id=emp_id,
-                         duplicate_of=body.get("duplicate_of"), embedding=_emb_for_crop(crop))
+                         duplicate_of=duplicate_of, embedding=_emb_for_crop(crop))
     if category == "staff" and emp_id and crop:
         _enroll_from_cache(emp_id, crop, window, track)        # enroll regardless of camera
     if camera == "C05":                                        # only door tracks drive the entry count
@@ -642,8 +636,48 @@ def allocate(body: dict) -> dict:
             store.add_label(window, f"false-{track}", "false_detection", in_track=track, reason=category)
         elif category == "customer":
             store.add_label(window, f"false-{track}", "reset", in_track=track)
+        return True
+    return False
+
+
+@router.post("/allocate")
+def allocate(body: dict) -> dict:
+    """Close-the-day: a human assigns ONE detection to a category (annotation + matcher label)."""
+    _guard_write()
+    window = body.get("window", "")
+    _window_dir(window)
+    camera, track = body.get("camera", ""), body.get("track")
+    category, crop, emp_id = body.get("category", ""), body.get("crop"), body.get("employee_id")
+    if track is None or category not in _ALLOC_CATS:
+        raise HTTPException(400, "allocate needs a track and a valid category")
+    if _alloc_one(window, camera, track, category, crop, emp_id, body.get("duplicate_of")):
         _rerun_l4(window)
-    return {"ok": True}  # the All-Detections tab reloads its own grouped data; skip the visits() rebuild
+    return {"ok": True}  # the All-Detections section reloads its own grouped data
+
+
+@router.post("/allocate-bulk")
+def allocate_bulk(body: dict) -> dict:
+    """Allocate MANY detections to ONE category in a single pass — write every annotation + label,
+    then re-run L4 just ONCE. Far faster than N separate /allocate calls (each of which re-ran L4)."""
+    _guard_write()
+    window = body.get("window", "")
+    _window_dir(window)
+    category, emp_id = body.get("category", ""), body.get("employee_id")
+    items = body.get("items", [])
+    if not items or category not in _ALLOC_CATS:
+        raise HTTPException(400, "allocate-bulk needs items + a valid category")
+    touched, n = False, 0
+    for it in items:
+        track = it.get("track")
+        if track is None:
+            continue
+        if _alloc_one(window, it.get("camera", ""), track, category, it.get("crop"),
+                      emp_id, it.get("duplicate_of")):
+            touched = True
+        n += 1
+    if touched:
+        _rerun_l4(window)                                      # ONE re-run for the whole batch
+    return {"ok": True, "n": n}
 
 
 def _enroll_from_cache(employee_id, crop, window, track):

@@ -119,7 +119,10 @@
   .ddhead:hover { border-color:var(--accent); }
   .dgrp .dbody { display:none; margin:8px 0 4px; }
   .dgrp.open .dbody { display:block; }
-  .dcard { width:138px; }
+  .dcard { width:138px; position:relative; }
+  .dsel { position:absolute; top:5px; left:5px; z-index:3; width:17px; height:17px; cursor:pointer; accent-color:var(--accent); }
+  .dcard.selected { outline:2px solid var(--accent); outline-offset:-1px; }
+  .bulkbar { display:flex; align-items:center; gap:7px; flex-wrap:wrap; background:rgba(76,141,255,.13); border:1px solid var(--accent); border-radius:10px; padding:9px 13px; margin:10px 0; font-size:13px; position:sticky; top:6px; z-index:6; }
   .amenu { display:flex; gap:1px; justify-content:center; margin-top:5px; flex-wrap:wrap; }
   .amenu button { padding:2px 4px; font-size:13px; border-radius:6px; line-height:1.1; }
   .adone { font-size:11px; color:var(--ok); margin-top:4px; font-weight:600; }
@@ -470,23 +473,34 @@ function renderDets(){
   const keep = a => (a||[]).filter(d=>DETF.cams[d.camera] && (d.dur_s||0)>=DETF.minDur && inTimeRange(d.ist));
   const card = d => {
     const a = d.annotation;
+    const k = d.camera+'|'+d.track, isSel = SEL.has(k);
     const badge = a ? `<div class="adone">✓ ${ALLOC[a]||a}</div>` : '';
+    const chk = RO ? '' : `<input type="checkbox" class="dsel" ${isSel?'checked':''} title="select for bulk allocate" onclick="event.stopPropagation();toggleSel('${d.camera}',${d.track},'${d.crop||''}')">`;
     const menu = RO ? '' : `<div class="amenu">
       <button title="Customer" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','customer')">🛍️</button>
       <button title="Staff" onclick="openStaffPicker('det-${d.camera}-${d.track}',${d.track},'${d.crop||''}','${d.camera}')">👤</button>
       <button title="Not a person" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','not_person')">🚫</button>
       <button title="Passed by" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','passby')">🚶</button>
       <button title="Duplicate" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','duplicate')">🔁</button></div>`;
-    return `<div class="ev dcard ${a?'resolved':''}">${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}</div>${badge}${menu}</div>`;
+    return `<div class="ev dcard ${a?'resolved':''} ${isSel?'selected':''}">${chk}${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}</div>${badge}${menu}</div>`;
   };
   const door=keep(r.door), inside=keep(r.inside), acc=keep(r.accounted), st=keep(r.street);
   const shown = door.length+inside.length+acc.length+st.length;
   const grp = (icon,title,arr,note,open) => `<div class="dgrp ${open?'open':''}"><div class="ddhead" onclick="this.closest('.dgrp').classList.toggle('open')"><b>${icon} ${title} · ${arr.length}</b> <span class="hint">${note}</span></div><div class="dbody"><div class="mini">${arr.map(card).join('')||'<p class="empty">none</p>'}</div></div></div>`;
   $('#detsHead').textContent = `All detections — reconciliation: did we miss anyone? · ${r.total} total`;
   const prog = r.total ? Math.round(100*(r.resolved||0)/r.total) : 0;
+  const bulkbar = SEL.size ? `<div class="bulkbar"><b>${SEL.size} selected</b> → allocate all to:
+       <button onclick="bulkAllocate('customer')">🛍️ Customer</button>
+       <button onclick="bulkStaff()">👤 Staff</button>
+       <button onclick="bulkAllocate('not_person')">🚫 Not a person</button>
+       <button onclick="bulkAllocate('passby')">🚶 Pass-by</button>
+       <button onclick="bulkAllocate('duplicate')">🔁 Duplicate</button>
+       <button class="no" onclick="clearSelDets()">clear</button></div>` : '';
   $('#dets').innerHTML =
     `<div class="prog"><b>Closing the day</b> — ${r.resolved||0} / ${r.total} resolved<div class="pbar"><i style="width:${prog}%"></i></div></div>
+     ${bulkbar}
      <div class="detf">filter: ${['C05','C11','C14'].map(c=>`<label><input type="checkbox" ${DETF.cams[c]?'checked':''} onchange="toggleCam('${c}')"> ${c}</label>`).join(' ')}
+       &nbsp;·&nbsp; <span class="hint">tick crops to multi-select, then bulk-allocate above</span>
        &nbsp;·&nbsp; hide &lt; <input type="number" value="${DETF.minDur}" min="0" step="1" style="width:46px" onchange="setMinDur(this.value)">s
        &nbsp;·&nbsp; <b>showing ${shown}</b> of ${r.total}</div>`
     + grp('🚪','At the door — not counted',door,'possible MISSED entries — review these',true)
@@ -544,13 +558,17 @@ async function label(id,verdict,inT,outT,win){
   showToast(`Visit ${id} ${VERB[verdict]||verdict}`, ()=>unlabelVisit(id,inT,outT,win));
 }
 let pickCtx = null;
-async function openStaffPicker(visitId, track, crop, camera, win){
-  pickCtx = {visitId, track, crop, camera, win};
+async function _openEmpModal(){
   const r = await fetch('/api/hitl/employees').then(r=>r.json());
   $('#empList').innerHTML = (r.employees||[]).map(e=>`<button class="empbtn" onclick="assignStaff(${e.id})">${e.code}${e.name?' · '+e.name:''}</button>`).join('')
       || '<p class="empty">No staff yet — create the first one below.</p>';
   $('#staffModal').classList.add('show');
 }
+async function openStaffPicker(visitId, track, crop, camera, win){
+  pickCtx = {visitId, track, crop, camera, win};
+  _openEmpModal();
+}
+function bulkStaff(){ pickCtx = {bulkStaff:true}; _openEmpModal(); }   // assign ALL selected to one staffer
 function closeStaff(){ $('#staffModal').classList.remove('show'); }
 async function createStaff(){
   const name = (prompt('Staff name (optional — you can add it later):','')||'').trim() || null;
@@ -559,6 +577,7 @@ async function createStaff(){
 }
 async function assignStaff(empId){
   const c = pickCtx; closeStaff();
+  if (c.bulkStaff){ bulkAllocate('staff', empId); return; }   // bulk: every selected crop -> this staffer
   const w = c.win||WIN;
   if (c.camera){  // allocation from a raw detection -> /allocate (annotation + staff)
     await fetch('/api/hitl/allocate',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -573,6 +592,23 @@ async function assignStaff(empId){
 }
 const ALLOC = {customer:'🛍️ customer', staff:'👤 staff', not_person:'🚫 not a person', passby:'🚶 passed by', duplicate:'🔁 duplicate'};
 function refreshAll(){ DETS_WIN = null; load(); }   // results + detections share one tab now -> refresh both
+let SEL = new Map();   // 'camera|track' -> {camera, track, crop}, the multi-selected detections
+function toggleSel(camera, track, crop){
+  const k = camera+'|'+track;
+  if (SEL.has(k)) SEL.delete(k); else SEL.set(k, {camera, track, crop});
+  renderDets();
+}
+function clearSelDets(){ SEL.clear(); renderDets(); }
+async function bulkAllocate(category, empId){
+  const items = [...SEL.values()];
+  if (!items.length) return;
+  const body = {window:WIN, category, items};
+  if (empId) body.employee_id = empId;
+  await fetch('/api/hitl/allocate-bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
+  showToast(`${items.length} crops → ${ALLOC[category]||category}`, null);
+  SEL.clear();
+  refreshAll();   // one re-run already happened server-side; refresh results + buckets together
+}
 async function allocate(camera, track, crop, category){
   await fetch('/api/hitl/allocate',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({window:WIN, camera, track, crop, category})}).then(r=>r.json());
