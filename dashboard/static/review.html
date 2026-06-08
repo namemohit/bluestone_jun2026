@@ -148,6 +148,9 @@
   .okbox.warn { background:rgba(227,160,43,.12); border-color:rgba(227,160,43,.45); }
   .okbox.bad { background:rgba(224,83,61,.12); border-color:rgba(224,83,61,.45); }
   .winbadge { display:inline-block; font-size:10px; color:var(--dim); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:1px 7px; margin-top:8px; letter-spacing:.03em; }
+  .tfbar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 12px; margin-bottom:14px; font-size:13px; color:var(--dim); }
+  .tfbar input[type=time] { width:108px; }
+  .divider { border:none; border-top:1px solid var(--line); margin:34px 0 4px; }
 </style>
 </head>
 <body>
@@ -161,11 +164,11 @@
 <main>
   <div class="tabs">
     <button class="tab active" onclick="showTab('review',this)">📋 Review</button>
-    <button class="tab" onclick="showTab('dets',this)">🔍 All Detections</button>
     <button class="tab" onclick="showTab('report',this)">📊 Report</button>
     <button class="tab" onclick="showTab('train',this)">🧠 Training</button>
   </div>
   <div id="tab-review">
+  <div class="tfbar" style="display:none">⏱ time slice: <input type="time" id="tfrom" step="60" onchange="setTimeF('from',this.value)"> – <input type="time" id="tto" step="60" onchange="setTimeF('to',this.value)"> <span id="tfclear"></span><span class="hint" style="margin-left:auto">narrow the whole-day results to a sub-range (a single hour is already its own slice)</span></div>
   <div id="linkbar" class="linkbar">
     <span>Linking: <b id="linkInfo"></b></span>
     <button class="ok" onclick="doLink()">Link as one visit ✓</button>
@@ -184,11 +187,10 @@
   <h2>👥 Attendance — each staffer's time in / out across the day (auto-tracked once enrolled)</h2>
   <div class="mini" id="attendance"></div>
   <p class="hint" style="margin-top:24px">Tip: click one “still inside” + one “pre-window exit” to link them into a recovered visit. Every action can be undone.</p>
+  <hr class="divider">
+  <h2 id="detsHead">🔍 Reconcile — all detections · did we miss anyone? (L1)</h2>
+  <div id="dets"><p class="hint">loading…</p></div>
   </div><!-- /tab-review -->
-  <div id="tab-dets" style="display:none">
-    <h2 id="detsHead">All detections — reconciliation: did we miss anyone? (L1)</h2>
-    <div id="dets"><p class="hint">loading…</p></div>
-  </div>
   <div id="tab-report" style="display:none"><div id="report"></div></div>
   <div id="tab-train" style="display:none"><div id="train"></div></div>
 </main>
@@ -254,15 +256,25 @@ function metricsHTML(m){
           <div class="metric"><b>${m.unreviewed||0}</b><span>to&nbsp;go</span></div>`;
 }
 
+let REV = null, DETS_WIN = null;
 async function load(){
   WIN = $('#win').value || WIN;
   LS.set('win', WIN);                       // remember the chosen view across refreshes
   DAY = /^\d{4}-\d{2}-\d{2}$/.test(WIN);   // a date (no _HHMM) = whole-day rollup
   if (DAY && !document.querySelector('#visits .card')) $('#visits').innerHTML = '<p class="hint">aggregating the whole day…</p>';
-  const d = await fetch(DAY ? `/api/hitl/visits-day/${WIN}` : `/api/hitl/visits/${WIN}`).then(r=>r.json());
+  REV = await fetch(DAY ? `/api/hitl/visits-day/${WIN}` : `/api/hitl/visits/${WIN}`).then(r=>r.json());
+  renderReview();
+  loadAttendance();
+  if (DETS_WIN !== WIN){ DETS_WIN = WIN; loadDetections(); }   // detections now live at the bottom of THIS tab
+}
+function renderReview(){
+  const d = REV; if (!d) return;
+  $('.tfbar').style.display = DAY ? 'flex' : 'none';   // hide the redundant time slice on a single-hour window
+  $('#tfrom').value = DETF.from||''; $('#tto').value = DETF.to||'';
+  $('#tfclear').innerHTML = (DETF.from||DETF.to) ? `<button onclick="clearTimeF()">clear</button>` : '';
   $('#metrics').innerHTML = metricsHTML(d.metrics||{});
-  // visit cards
-  $('#visits').innerHTML = (d.visits||[]).map(v=>{
+  // visit cards (scoped to the time slice)
+  $('#visits').innerHTML = (d.visits||[]).filter(v=>inTimeRange(v.in_ist)).map(v=>{
     const cls = v.label==='confirm'?'confirm':v.label==='reject'?'reject':(v.status==='needs_review'?'review':'');
     const tag = v.label ? `<span class="tag done">${v.label==='confirm'?'confirmed':v.label}</span>`
                         : `<span class="tag ${v.status==='needs_review'?'review':'auto'}">${v.status==='needs_review'?'needs review':'auto'}</span>`;
@@ -285,9 +297,9 @@ async function load(){
       ${DAY && v.window ? `<div class="winbadge">${v.window.split('_')[1]||v.window}</div>` : ''}
     </div>`;
   }).join('') || '<p class="empty">No matched visits.</p>';
-  // unmatched events
-  $('#open').innerHTML = (d.open_sessions||[]).map(e=>evHTML('open',e)).join('') || '<p class="empty">none</p>';
-  $('#pre').innerHTML  = (d.pre_window_exits||[]).map(e=>evHTML('pre',e)).join('') || '<p class="empty">none</p>';
+  // unmatched events (scoped to the time slice)
+  $('#open').innerHTML = (d.open_sessions||[]).filter(e=>inTimeRange(e.ist)).map(e=>evHTML('open',e)).join('') || '<p class="empty">none</p>';
+  $('#pre').innerHTML  = (d.pre_window_exits||[]).filter(e=>inTimeRange(e.ist)).map(e=>evHTML('pre',e)).join('') || '<p class="empty">none</p>';
   $('#staff').innerHTML = (d.staff||[]).map(g=>{
       const lab = g.employee_id ? `${g.code||('S'+g.employee_id)}${g.name?' · '+g.name:''}` : 'unassigned';
       const nAuto = (g.auto_tracks||[]).length;
@@ -303,23 +315,18 @@ async function load(){
         <div class="lb" style="font-size:13px"><b>${lab}</b> · ${sub}</div>
         <div class="sgrp">${imgs}</div>${act}</div>`;
     }).join('') || '<p class="empty">none — click 👤 on a visit/person to assign them</p>';
-  loadAttendance();
-  $('#entries').innerHTML = (d.entries||[]).map(entryHTML).join('') || '<p class="empty">no door entries yet in this window</p>';
+  $('#entries').innerHTML = (d.entries||[]).filter(e=>inTimeRange(e.ist)).map(entryHTML).join('') || '<p class="empty">no door entries yet in this window</p>';
   renderLinkbar();
-  // L1 detections are lazy-loaded in the All Detections tab (heavy ~872-row fetch)
-  DETS_LOADED = false;
-  if ($('#tab-dets') && $('#tab-dets').style.display !== 'none') loadDetections();
 }
 function showTab(name, btn){
+  if (!$('#tab-'+name)) name = 'review';    // stale/removed tab (e.g. old 'dets') -> Review
   if (!btn) btn = [...document.querySelectorAll('.tab')].find(t=>(t.getAttribute('onclick')||'').includes("'"+name+"'"));
   LS.set('tab', name);                      // remember the active tab across refreshes
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   if (btn) btn.classList.add('active');
   $('#tab-review').style.display = name==='review' ? '' : 'none';
-  $('#tab-dets').style.display   = name==='dets'   ? '' : 'none';
   $('#tab-report').style.display = name==='report' ? '' : 'none';
   $('#tab-train').style.display  = name==='train'  ? '' : 'none';
-  if (name==='dets' && !DETS_LOADED) loadDetections();
   if (name==='report') loadReport();
   if (name==='train') loadTraining();
 }
@@ -453,14 +460,14 @@ async function loadDetections(){
   if (!r.grouped){ $('#dets').innerHTML = (r.detections||[]).map(detHTML).join('')||'<p class="empty">none</p>'; return; }
   DETDATA = r; renderDets();
 }
+function inTimeRange(ist){ if (!DAY) return true; const t=(ist||'').slice(0,5); return (!DETF.from || t>=DETF.from) && (!DETF.to || t<=DETF.to); }  // only the whole-day view slices by time; a single hour is already a slice
 function toggleCam(c){ DETF.cams[c]=DETF.cams[c]?0:1; LS.set('detf',DETF); renderDets(); }
 function setMinDur(v){ DETF.minDur=parseFloat(v)||0; LS.set('detf',DETF); renderDets(); }
-function setTimeF(which,v){ DETF[which]=v||''; LS.set('detf',DETF); renderDets(); }
-function clearTimeF(){ DETF.from=DETF.to=''; LS.set('detf',DETF); renderDets(); }
+function setTimeF(which,v){ DETF[which]=v||''; LS.set('detf',DETF); renderReview(); renderDets(); }   // one slice -> both halves
+function clearTimeF(){ DETF.from=DETF.to=''; LS.set('detf',DETF); renderReview(); renderDets(); }
 function renderDets(){
   const r=DETDATA; if(!r) return;
-  const inT = ist => { const t=(ist||'').slice(0,5); return (!DETF.from || t>=DETF.from) && (!DETF.to || t<=DETF.to); };
-  const keep = a => (a||[]).filter(d=>DETF.cams[d.camera] && (d.dur_s||0)>=DETF.minDur && inT(d.ist));
+  const keep = a => (a||[]).filter(d=>DETF.cams[d.camera] && (d.dur_s||0)>=DETF.minDur && inTimeRange(d.ist));
   const card = d => {
     const a = d.annotation;
     const badge = a ? `<div class="adone">✓ ${ALLOC[a]||a}</div>` : '';
@@ -481,7 +488,6 @@ function renderDets(){
     `<div class="prog"><b>Closing the day</b> — ${r.resolved||0} / ${r.total} resolved<div class="pbar"><i style="width:${prog}%"></i></div></div>
      <div class="detf">filter: ${['C05','C11','C14'].map(c=>`<label><input type="checkbox" ${DETF.cams[c]?'checked':''} onchange="toggleCam('${c}')"> ${c}</label>`).join(' ')}
        &nbsp;·&nbsp; hide &lt; <input type="number" value="${DETF.minDur}" min="0" step="1" style="width:46px" onchange="setMinDur(this.value)">s
-       &nbsp;·&nbsp; ⏱ <input type="time" value="${DETF.from}" step="60" style="width:104px" onchange="setTimeF('from',this.value)"> – <input type="time" value="${DETF.to}" step="60" style="width:104px" onchange="setTimeF('to',this.value)">${(DETF.from||DETF.to)?` <span style="cursor:pointer;text-decoration:underline" onclick="clearTimeF()">clear</span>`:''}
        &nbsp;·&nbsp; <b>showing ${shown}</b> of ${r.total}</div>`
     + grp('🚪','At the door — not counted',door,'possible MISSED entries — review these',true)
     + grp('🏠','Inside — not matched to a visit',inside,'interior presence (mostly tracker fragments; raise the duration filter)',false)
@@ -558,7 +564,7 @@ async function assignStaff(empId){
     await fetch('/api/hitl/allocate',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({window:w, camera:c.camera, track:c.track, crop:c.crop, category:'staff', employee_id:empId})}).then(r=>r.json());
     showToast(`#${c.track} → Staff #${empId}`, null);
-    loadDetections(); return;
+    refreshAll(); return;
   }
   const d = await fetch('/api/hitl/label',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({window:w, visit_id:c.visitId, verdict:'employee', in_track:c.track, employee_id:empId, crop:c.crop})}).then(r=>r.json());
@@ -566,11 +572,12 @@ async function assignStaff(empId){
   showToast(`Assigned to Staff #${empId}`, ()=>unlabelVisit(c.visitId, c.track, null, c.win));
 }
 const ALLOC = {customer:'🛍️ customer', staff:'👤 staff', not_person:'🚫 not a person', passby:'🚶 passed by', duplicate:'🔁 duplicate'};
+function refreshAll(){ DETS_WIN = null; load(); }   // results + detections share one tab now -> refresh both
 async function allocate(camera, track, crop, category){
   await fetch('/api/hitl/allocate',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({window:WIN, camera, track, crop, category})}).then(r=>r.json());
   showToast(`#${track} → ${ALLOC[category]||category}`, null);
-  loadDetections();
+  refreshAll();
 }
 async function renameStaff(empId){
   const name = (prompt('Name for Staff #'+empId+':','')||'').trim();
