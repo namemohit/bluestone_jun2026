@@ -211,7 +211,9 @@
 <script>
 const $ = s => document.querySelector(s);
 const cropURL = p => `/api/hitl/crop?path=${encodeURIComponent(p)}`;
-let WIN = null, sel = {open:null, pre:null}, RO = false, HIDE = false, DAY = false;
+const LS = { get(k,d){ try{ const v=localStorage.getItem('bs.'+k); return v==null?d:JSON.parse(v); }catch(e){ return d; } },
+             set(k,v){ try{ localStorage.setItem('bs.'+k, JSON.stringify(v)); }catch(e){} } };
+let WIN = LS.get('win', null), sel = {open:null, pre:null}, RO = false, HIDE = false, DAY = false, TAB_RESTORED = false;
 // faces are hidden only when the server says so (unprotected public view); a password unhides them
 const cropImg = p => HIDE ? '<div class="nocrop" title="face hidden on this view">👤</div>' : `<img src="${cropURL(p)}" onclick="event.stopPropagation();zoom('${p}')" style="cursor:zoom-in" title="click to enlarge">`;
 
@@ -233,6 +235,7 @@ async function loadWindows() {
     const best = pool.reduce((a,b)=>(b.visits||0)>(a.visits||0)?b:a, pool[0]);
     if (!WIN || (!r.windows.some(w=>w.window===WIN) && !dates.includes(WIN))) WIN = best.window; // keep selection (incl. a whole-day pick)
     sel.value = WIN; load();
+    if (!TAB_RESTORED){ TAB_RESTORED = true; showTab(LS.get('tab','review')); }  // restore tab once (not on auto-refresh)
   } else $('#visits').innerHTML = '<p class="empty">No processed windows yet.</p>';
 }
 let autoTimer = null;
@@ -252,6 +255,7 @@ function metricsHTML(m){
 
 async function load(){
   WIN = $('#win').value || WIN;
+  LS.set('win', WIN);                       // remember the chosen view across refreshes
   DAY = /^\d{4}-\d{2}-\d{2}$/.test(WIN);   // a date (no _HHMM) = whole-day rollup
   if (DAY) $('#visits').innerHTML = '<p class="hint">aggregating the whole day…</p>';
   const d = await fetch(DAY ? `/api/hitl/visits-day/${WIN}` : `/api/hitl/visits/${WIN}`).then(r=>r.json());
@@ -305,6 +309,8 @@ async function load(){
   if ($('#tab-dets') && $('#tab-dets').style.display !== 'none') loadDetections();
 }
 function showTab(name, btn){
+  if (!btn) btn = [...document.querySelectorAll('.tab')].find(t=>(t.getAttribute('onclick')||'').includes("'"+name+"'"));
+  LS.set('tab', name);                      // remember the active tab across refreshes
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   if (btn) btn.classList.add('active');
   $('#tab-review').style.display = name==='review' ? '' : 'none';
@@ -411,7 +417,7 @@ async function doRerun(){
   msg.innerHTML = `<div class="delta"><b>Δ after re-run</b> · ${r.scope} · ${r.n_windows} window(s) · model v${(r.model||{}).version??'—'}
     <div class="chips" style="margin-top:6px">${cell('customers','customers')} ${cell('auto_staff','auto-staff')} ${cell('entries','door entries')} ${cell('visits','matched')}</div></div>`;
 }
-let DETS_LOADED=false, DETDATA=null, DETF={cams:{C05:1,C11:1,C14:1}, minDur:0, from:'', to:''};
+let DETS_LOADED=false, DETDATA=null, DETF=LS.get('detf', {cams:{C05:1,C11:1,C14:1}, minDur:0, from:'', to:''});
 async function loadDetections(){
   DETS_LOADED = true;
   if (DAY){ $('#dets').innerHTML = '<p class="hint">All-Detections is per-hour — pick a specific hour in the dropdown to resolve detections.</p>'; return; }
@@ -420,10 +426,10 @@ async function loadDetections(){
   if (!r.grouped){ $('#dets').innerHTML = (r.detections||[]).map(detHTML).join('')||'<p class="empty">none</p>'; return; }
   DETDATA = r; renderDets();
 }
-function toggleCam(c){ DETF.cams[c]=DETF.cams[c]?0:1; renderDets(); }
-function setMinDur(v){ DETF.minDur=parseFloat(v)||0; renderDets(); }
-function setTimeF(which,v){ DETF[which]=v||''; renderDets(); }
-function clearTimeF(){ DETF.from=DETF.to=''; renderDets(); }
+function toggleCam(c){ DETF.cams[c]=DETF.cams[c]?0:1; LS.set('detf',DETF); renderDets(); }
+function setMinDur(v){ DETF.minDur=parseFloat(v)||0; LS.set('detf',DETF); renderDets(); }
+function setTimeF(which,v){ DETF[which]=v||''; LS.set('detf',DETF); renderDets(); }
+function clearTimeF(){ DETF.from=DETF.to=''; LS.set('detf',DETF); renderDets(); }
 function renderDets(){
   const r=DETDATA; if(!r) return;
   const inT = ist => { const t=(ist||'').slice(0,5); return (!DETF.from || t>=DETF.from) && (!DETF.to || t<=DETF.to); };
