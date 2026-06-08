@@ -157,6 +157,29 @@ create table if not exists showroom.employee_gallery (
 );
 create index if not exists gallery_by_store on showroom.employee_gallery (store_id);
 
+-- ---- annotations: HUMAN ground-truth per detection (close-the-day) + durable training labels ----
+--   one human allocation per (window,camera,track); latest wins. Doubles as the ReID/YOLO dataset.
+create table if not exists showroom.annotations (
+  id           bigint generated always as identity primary key,
+  window_id    text not null references showroom.windows(id) on delete cascade,
+  camera       text not null,                                -- 'C05' | 'C11' | 'C14'
+  track        integer not null,
+  crop_url     text,
+  category     text not null
+                 check (category in ('customer','staff','not_person','passby','duplicate')),
+  employee_id  integer,                                      -- which staffer (category='staff')
+  duplicate_of integer,                                      -- another track (category='duplicate')
+  embedding    jsonb,                                        -- 512-d OSNet vector (from the cache)
+  reviewer     text not null default 'human',
+  created_at   timestamptz not null default now()
+);
+create index if not exists annotations_by_window on showroom.annotations (window_id);
+-- the current human truth = newest allocation per (window,camera,track)
+create or replace view showroom.latest_annotations as
+select distinct on (window_id, camera, track) *
+from showroom.annotations
+order by window_id, camera, track, created_at desc;
+
 -- ---- keep windows.updated_at fresh on every change ------------------------
 create or replace function showroom.touch_updated_at() returns trigger
   language plpgsql as $$ begin new.updated_at = now(); return new; end $$;

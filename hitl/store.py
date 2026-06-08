@@ -52,13 +52,15 @@ class LocalStore:
 
     # ---- compile labels -> matcher feedback -----------------------------
     def feedback(self, window: str) -> dict:
-        cannot, must, employees, not_staff = [], [], [], []
+        cannot, must, employees, not_staff, false = [], [], [], [], []
         for l in self.get_labels(window):
             it, ot = l.get("in_track"), l.get("out_track")
             v = l["verdict"]
             vid = l.get("visit_id", "")
             if vid.startswith("notstaff-") and v == "reject" and it is not None:
                 not_staff.append(it)             # human override: NOT staff, keep as customer
+            elif v == "false_detection" and it is not None:
+                false.append(it)                 # not-a-person / pass-by -> drop from customer counts
             elif v == "reject" and it is not None and ot is not None:
                 cannot.append([it, ot])          # this IN and OUT are NOT the same person
             elif v == "confirm" and it is not None and ot is not None:
@@ -66,7 +68,8 @@ class LocalStore:
             elif v == "employee" and it is not None:
                 employees.append(it)             # drop staff from customer counts
         employees = [t for t in employees if t not in not_staff]
-        return {"cannot_link": cannot, "must_link": must, "employees": employees, "not_staff": not_staff}
+        return {"cannot_link": cannot, "must_link": must, "employees": employees,
+                "not_staff": not_staff, "false": false}
 
     def write_feedback(self, window: str) -> str:
         p = self._wdir(window) / "feedback.json"
@@ -137,6 +140,12 @@ class LocalStore:
 
     def staff_matches(self, employee_id: int, store_id: str = "s14") -> dict:
         return {"enrolled_crop": None, "matches": []}
+
+    def add_annotation(self, window, camera, track, category, **kw) -> None:
+        return None
+
+    def latest_annotations(self, window: str) -> list[dict]:
+        return []
 
     def attendance(self, store_id: str = "s14", date=None) -> list[dict]:
         return []

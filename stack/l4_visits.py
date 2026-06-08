@@ -188,13 +188,14 @@ def main() -> None:
     must = {tuple(p) for p in feedback.get("must_link", [])}       # (in_track, out_track) forced
     employees = set(feedback.get("employees", []))                  # entry-cam tracks that are staff
     not_staff = set(feedback.get("not_staff", []))                  # human override: NOT staff (customer)
+    false_tracks = set(feedback.get("false", []))                   # not-a-person / pass-by -> not a customer
     gallery = json.load(open(args.gallery)) if (args.gallery and os.path.exists(args.gallery)) else []
 
     events = sorted(detect_events(L1, cfg), key=lambda e: e["ts"])
     # de-dup same-direction crossings within window (one fragmented person)
     kept = []
     for e in events:
-        if e["track"] in employees:  # confirmed staff -> not a customer visit
+        if e["track"] in employees or e["track"] in false_tracks:  # staff / not-a-person / pass-by
             continue
         if kept and e["dir"] == kept[-1]["dir"] and e["ts"] - kept[-1]["ts"] <= dedup_w:
             continue

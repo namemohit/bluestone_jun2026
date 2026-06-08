@@ -119,6 +119,14 @@
   .ddhead:hover { border-color:var(--accent); }
   .dgrp .dbody { display:none; margin:8px 0 4px; }
   .dgrp.open .dbody { display:block; }
+  .dcard { width:138px; }
+  .amenu { display:flex; gap:1px; justify-content:center; margin-top:5px; flex-wrap:wrap; }
+  .amenu button { padding:2px 4px; font-size:13px; border-radius:6px; line-height:1.1; }
+  .adone { font-size:11px; color:var(--ok); margin-top:4px; font-weight:600; }
+  .ev.resolved { opacity:.55; border-color:var(--ok); }
+  .prog { font-size:13px; color:var(--ink); margin:2px 0 12px; }
+  .pbar { height:8px; background:#0a0d11; border-radius:5px; margin-top:6px; max-width:440px; overflow:hidden; }
+  .pbar i { display:block; height:100%; background:var(--ok); transition:width .3s; }
 </style>
 </head>
 <body>
@@ -288,12 +296,24 @@ function setMinDur(v){ DETF.minDur=parseFloat(v)||0; renderDets(); }
 function renderDets(){
   const r=DETDATA; if(!r) return;
   const keep = a => (a||[]).filter(d=>DETF.cams[d.camera] && (d.dur_s||0)>=DETF.minDur);
-  const card = d => `<div class="ev">${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}</div></div>`;
+  const card = d => {
+    const a = d.annotation;
+    const badge = a ? `<div class="adone">✓ ${ALLOC[a]||a}</div>` : '';
+    const menu = RO ? '' : `<div class="amenu">
+      <button title="Customer" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','customer')">🛍️</button>
+      <button title="Staff" onclick="openStaffPicker('det-${d.camera}-${d.track}',${d.track},'${d.crop||''}','${d.camera}')">👤</button>
+      <button title="Not a person" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','not_person')">🚫</button>
+      <button title="Passed by" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','passby')">🚶</button>
+      <button title="Duplicate" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','duplicate')">🔁</button></div>`;
+    return `<div class="ev dcard ${a?'resolved':''}">${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}</div>${badge}${menu}</div>`;
+  };
   const door=keep(r.door), inside=keep(r.inside), acc=keep(r.accounted), st=keep(r.street);
   const grp = (icon,title,arr,note,open) => `<div class="dgrp ${open?'open':''}"><div class="ddhead" onclick="this.closest('.dgrp').classList.toggle('open')"><b>${icon} ${title} · ${arr.length}</b> <span class="hint">${note}</span></div><div class="dbody"><div class="mini">${arr.map(card).join('')||'<p class="empty">none</p>'}</div></div></div>`;
   $('#detsHead').textContent = `All detections — reconciliation: did we miss anyone? · ${r.total} total`;
+  const prog = r.total ? Math.round(100*(r.resolved||0)/r.total) : 0;
   $('#dets').innerHTML =
-    `<div class="detf">filter: ${['C05','C11','C14'].map(c=>`<label><input type="checkbox" ${DETF.cams[c]?'checked':''} onchange="toggleCam('${c}')"> ${c}</label>`).join(' ')}
+    `<div class="prog"><b>Closing the day</b> — ${r.resolved||0} / ${r.total} resolved<div class="pbar"><i style="width:${prog}%"></i></div></div>
+     <div class="detf">filter: ${['C05','C11','C14'].map(c=>`<label><input type="checkbox" ${DETF.cams[c]?'checked':''} onchange="toggleCam('${c}')"> ${c}</label>`).join(' ')}
        &nbsp;·&nbsp; hide &lt; <input type="number" value="${DETF.minDur}" min="0" step="1" style="width:46px" onchange="setMinDur(this.value)">s</div>`
     + grp('🚪','At the door — not counted',door,'possible MISSED entries — review these',true)
     + grp('🏠','Inside — not matched to a visit',inside,'interior presence (mostly tracker fragments; raise the duration filter)',false)
@@ -350,8 +370,8 @@ async function label(id,verdict,inT,outT){
   showToast(`Visit ${id} ${VERB[verdict]||verdict}`, ()=>unlabelVisit(id,inT,outT));
 }
 let pickCtx = null;
-async function openStaffPicker(visitId, track, crop){
-  pickCtx = {visitId, track, crop};
+async function openStaffPicker(visitId, track, crop, camera){
+  pickCtx = {visitId, track, crop, camera};
   const r = await fetch('/api/hitl/employees').then(r=>r.json());
   $('#empList').innerHTML = (r.employees||[]).map(e=>`<button class="empbtn" onclick="assignStaff(${e.id})">${e.code}${e.name?' · '+e.name:''}</button>`).join('')
       || '<p class="empty">No staff yet — create the first one below.</p>';
@@ -365,10 +385,25 @@ async function createStaff(){
 }
 async function assignStaff(empId){
   const c = pickCtx; closeStaff();
+  if (c.camera){  // allocation from a raw detection -> /allocate (annotation + staff)
+    const d = await fetch('/api/hitl/allocate',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({window:WIN, camera:c.camera, track:c.track, crop:c.crop, category:'staff', employee_id:empId})}).then(r=>r.json());
+    showToast(`#${c.track} → Staff #${empId}`, null);
+    if (DETS_LOADED) loadDetections();
+    paint(d); return;
+  }
   const d = await fetch('/api/hitl/label',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({window:WIN, visit_id:c.visitId, verdict:'employee', in_track:c.track, employee_id:empId, crop:c.crop})}).then(r=>r.json());
   clearSel(); paint(d);
   showToast(`Assigned to Staff #${empId}`, ()=>unlabelVisit(c.visitId, c.track, null));
+}
+const ALLOC = {customer:'🛍️ customer', staff:'👤 staff', not_person:'🚫 not a person', passby:'🚶 passed by', duplicate:'🔁 duplicate'};
+async function allocate(camera, track, crop, category){
+  const d = await fetch('/api/hitl/allocate',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({window:WIN, camera, track, crop, category})}).then(r=>r.json());
+  showToast(`#${track} → ${ALLOC[category]||category}`, null);
+  if (DETS_LOADED) loadDetections();
+  paint(d);
 }
 async function renameStaff(empId){
   const name = (prompt('Name for Staff #'+empId+':','')||'').trim();

@@ -209,7 +209,8 @@ def detections(window: str, grouped: int = 0) -> dict:
         buckets[d["disposition"]].append(d)
     for k in buckets:
         buckets[k].sort(key=lambda x: x.get("ist") or "")
-    return {"grouped": True, "total": len(dets), **buckets,
+    return {"grouped": True, "total": len(dets),
+            "resolved": sum(1 for d in dets if d.get("annotation")), **buckets,
             "counts": {k: len(v) for k, v in buckets.items()}}
 
 
@@ -269,6 +270,7 @@ def _classify_detections(window: str) -> list:
             accounted.add(("C05", l["in_track"]))
             staff_ct.add(("C05", l["in_track"]))
 
+    ann = {(a["camera"], a["track"]): a for a in store.latest_annotations(window)}  # human allocations
     dirs = [(wcfg.get("l1"), "C05")] + [(d, Path(d).name.replace("L1_", "")) for d in wcfg.get("interior", [])]
     out = []
     for d, cam in dirs:
@@ -289,7 +291,8 @@ def _classify_detections(window: str) -> list:
             out.append({"camera": cam, "track": t["track"], "ist": t.get("first_ist"),
                         "dur_s": round(t.get("last_ts", 0) - t.get("first_ts", 0), 1),
                         "crop": (t.get("crop", "") or "").replace("\\", "/"),
-                        "disposition": disp, "staff": key in staff_ct})
+                        "disposition": disp, "staff": key in staff_ct,
+                        "annotation": (ann.get(key) or {}).get("category")})
     return out
 
 
@@ -371,6 +374,49 @@ def unstaff_track(body: dict) -> dict:
         raise HTTPException(400, "unstaff-track needs a track")
     store.add_label(window, f"notstaff-{track}", "reject", reason="not staff", in_track=track)
     _rerun_l4(window)
+    return visits(window)
+
+
+def _emb_for_crop(crop):
+    """OSNet embedding for a crop pulled from the L4 cache (no GPU); None if absent."""
+    import pickle
+    if not crop or not os.path.exists("outputs/osnet_emb_cache.pkl"):
+        return None
+    try:
+        with open("outputs/osnet_emb_cache.pkl", "rb") as f:
+            cache = pickle.load(f)
+    except Exception:
+        return None
+    return {str(k).replace("\\", "/"): v for k, v in cache.items()}.get(str(crop).replace("\\", "/"))
+
+
+@router.post("/allocate")
+def allocate(body: dict) -> dict:
+    """Close-the-day: a human assigns ONE detection to a category. Always records a durable annotation
+    (ground truth + training crop); for door (C05) tracks it also writes the matcher label so the
+    customer count respects it (staff -> employee; not-a-person/pass-by/duplicate -> false_detection;
+    customer -> clear any drop)."""
+    _guard_write()
+    window = body.get("window", "")
+    _window_dir(window)
+    camera, track = body.get("camera", ""), body.get("track")
+    category, crop, emp_id = body.get("category", ""), body.get("crop"), body.get("employee_id")
+    if track is None or category not in ("customer", "staff", "not_person", "passby", "duplicate"):
+        raise HTTPException(400, "allocate needs a track and a valid category")
+    store.add_annotation(window, camera, track, category, crop_url=crop, employee_id=emp_id,
+                         duplicate_of=body.get("duplicate_of"), embedding=_emb_for_crop(crop))
+    if category == "staff" and emp_id and crop:
+        _enroll_from_cache(emp_id, crop, window, track)        # enroll regardless of camera
+    if camera == "C05":                                        # only door tracks drive the entry count
+        if category == "staff":
+            store.add_label(window, f"open-{track}", "employee", in_track=track, employee_id=emp_id)
+            store.add_label(window, f"notstaff-{track}", "reset", in_track=track)
+            store.add_label(window, f"false-{track}", "reset", in_track=track)
+        elif category in ("not_person", "passby", "duplicate"):
+            store.add_label(window, f"false-{track}", "false_detection", in_track=track, reason=category)
+        elif category == "customer":
+            store.add_label(window, f"false-{track}", "reset", in_track=track)
+        _rerun_l4(window)
     return visits(window)
 
 

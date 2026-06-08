@@ -201,6 +201,24 @@ class SupabaseStore:
                         "from employee_gallery where store_id=%s", (store_id,))
             return [dict(r) for r in cur.fetchall()]
 
+    def add_annotation(self, window: str, camera: str, track: int, category: str, *,
+                       crop_url=None, employee_id=None, duplicate_of=None, embedding=None,
+                       reviewer: str = "human") -> None:
+        """Append a human ground-truth allocation for one detection (close-the-day + training)."""
+        emb = None
+        if embedding is not None:
+            emb = json.dumps(embedding.tolist() if hasattr(embedding, "tolist") else [float(x) for x in embedding])
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("insert into annotations(window_id,camera,track,crop_url,category,employee_id,"
+                        "duplicate_of,embedding,reviewer) values(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (window, camera, track, crop_url, category, employee_id, duplicate_of, emb, reviewer))
+
+    def latest_annotations(self, window: str) -> list[dict]:
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("select camera, track, category, employee_id, duplicate_of, crop_url "
+                        "from latest_annotations where window_id=%s", (window,))
+            return [dict(r) for r in cur.fetchall()]
+
     def staff_matches(self, employee_id: int, store_id: str = "s14") -> dict:
         """Every sighting grouped to ONE employee across the whole day, for human confirmation:
         the enrolled crop + matches [{window, track, source('manual'|'auto'), crop, sim}] from the
@@ -316,12 +334,14 @@ class SupabaseStore:
                 "employee_id": employee_id}
 
     def feedback(self, window: str) -> dict:
-        cannot, must, employees, not_staff = [], [], [], []
+        cannot, must, employees, not_staff, false = [], [], [], [], []
         for l in self.get_labels(window):
             it, ot, v = l.get("in_track"), l.get("out_track"), l["verdict"]
             vid = l.get("visit_id", "")
             if vid.startswith("notstaff-") and v == "reject" and it is not None:
                 not_staff.append(it)                         # human: this track is NOT staff
+            elif v == "false_detection" and it is not None:
+                false.append(it)                             # not-a-person / pass-by -> drop from counts
             elif v == "reject" and it is not None and ot is not None:
                 cannot.append([it, ot])
             elif v == "confirm" and it is not None and ot is not None:
@@ -329,7 +349,8 @@ class SupabaseStore:
             elif v == "employee" and it is not None:
                 employees.append(it)
         employees = [t for t in employees if t not in not_staff]   # not_staff overrides a staff mark
-        return {"cannot_link": cannot, "must_link": must, "employees": employees, "not_staff": not_staff}
+        return {"cannot_link": cannot, "must_link": must, "employees": employees,
+                "not_staff": not_staff, "false": false}
 
     def write_feedback(self, window: str) -> str:
         d = self.root / window
