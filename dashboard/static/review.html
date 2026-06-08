@@ -182,6 +182,13 @@
   .okbox.warn { background:rgba(227,160,43,.12); border-color:rgba(227,160,43,.45); }
   .okbox.bad { background:rgba(224,83,61,.12); border-color:rgba(224,83,61,.45); }
   .winbadge { display:inline-block; font-size:10px; color:var(--dim); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:1px 7px; margin-top:8px; letter-spacing:.03em; }
+  .winbadge.now { background:rgba(76,141,255,.2); color:var(--accent); border-color:var(--accent); font-weight:700; }
+  /* anchored-PID chip: the stable #S{id}/#C{entry} tag shown on every crop wherever the person appears */
+  .pidbadge { display:inline-block; font-size:10px; font-weight:700; border-radius:6px; padding:1px 6px; margin-left:5px; vertical-align:middle; letter-spacing:.02em; }
+  .pidbadge.staff { background:rgba(76,141,255,.16); color:var(--accent); border:1px solid rgba(76,141,255,.4); }
+  .pidbadge.cust  { background:rgba(55,184,106,.14); color:var(--ok); border:1px solid rgba(55,184,106,.35); }
+  .pidbadge.weak  { background:rgba(227,160,43,.16); color:var(--warn); border:1px solid rgba(227,160,43,.45); }
+  .mcell.weak { border:1px dashed var(--warn); opacity:.85; }
   .tfbar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 12px; margin-bottom:14px; font-size:13px; color:var(--dim); }
   .tfbar input[type=time] { width:108px; }
   .divider { border:none; border-top:1px solid var(--line); margin:34px 0 4px; }
@@ -253,6 +260,11 @@ const LS = { get(k,d){ try{ const v=localStorage.getItem('bs.'+k); return v==nul
 let WIN = LS.get('win', null), sel = {open:null, pre:null}, RO = false, HIDE = false, DAY = false, TAB_RESTORED = false;
 // faces are hidden only when the server says so (unprotected public view); a password unhides them
 const cropImg = p => HIDE ? '<div class="nocrop" title="face hidden on this view">👤</div>' : `<img src="${cropURL(p)}" onclick="event.stopPropagation();zoom('${p}')" style="cursor:zoom-in" title="click to enlarge">`;
+function pidTag(d){   // the stable anchor chip — #S{id} for staff, #C{entry-track} for a customer — same tag wherever the person shows up
+  if(!d || !d.pid) return '';
+  const isS = String(d.pid)[0]==='S';
+  return `<span class="pidbadge ${isS?'staff':'cust'}${(isS&&d.weak_staff)?' weak':''}" title="${isS?'stable staff id (employee) — trace this person everywhere':'per-visit customer id = the door entry track, this hour'}">#${d.pid}${(isS&&d.weak_staff)?' ⚠':''}</span>`;
+}
 
 function zoom(p){ if(HIDE||!p) return; $('#lbimg').src = cropURL(p); $('#lightbox').classList.add('show'); }
 function showFrame(window,camera,track){   // full source frame + trajectory, for the enter-vs-passby call
@@ -384,12 +396,12 @@ function reportHTML(r){   // the report BODY (KPIs -> footfall -> dwell/hot-lead
       <div class="repcard"><div class="big">${seg.engaged||0}</div>engaged <span class="hint">2–10 min</span></div>
       <div class="repcard"><div class="big" style="color:var(--ok)">${seg.serious||0}</div>serious 🔥 <span class="hint">&gt; 10 min</span></div>
     </div>
-    ${hot.length?`<h3>🔥 Hot leads — longest dwell <span class="hint">(your follow-up list)</span></h3><div class="hotrow">${hot.map(h=>`<figure class="hotcell">${thumb(h.crop)}<figcaption><b>${mins(h.dwell_s)}</b><br>${hrf(h.window)} · in ${h.in_ist||'—'}</figcaption></figure>`).join('')}</div>`:''}
+    ${hot.length?`<h3>🔥 Hot leads — longest dwell <span class="hint">(your follow-up list)</span></h3><div class="hotrow">${hot.map(h=>`<figure class="hotcell">${thumb(h.crop)}<figcaption><b>${mins(h.dwell_s)}</b>${h.pid?` <span class="pidbadge cust">#${h.pid}</span>`:''}<br>${hrf(h.window)} · in ${h.in_ist||'—'}</figcaption></figure>`).join('')}</div>`:''}
     <h2>Customers by group ${badge('high confidence')} <span class="hint">grouped by arrival time</span></h2>
     <div class="grouplist">${grps.map(gr=>`<div class="gcard"><div class="ghead"><b>Group ${gr.group_id}</b> · ${gr.size} ${gr.size>1?'people':'person'} <span class="hint">— ${gr.reason}</span></div>
-      <div class="gmembers">${gr.members.map(m=>`<figure class="gcell">${thumb(m.crop)}<figcaption>${m.in_ist||'—'}${m.out_ist?'<br>→ '+m.out_ist:''}<br><span class="hint">${m.dwell_s?mins(m.dwell_s)+' dwell':'no exit yet'}</span></figcaption></figure>`).join('')}</div></div>`).join('')||'<p class="empty">no customers yet</p>'}</div>
+      <div class="gmembers">${gr.members.map(m=>`<figure class="gcell">${thumb(m.crop)}<figcaption>${m.pid?`<span class="pidbadge cust">#${m.pid}</span><br>`:''}${m.in_ist||'—'}${m.out_ist?'<br>→ '+m.out_ist:''}<br><span class="hint">${m.dwell_s?mins(m.dwell_s)+' dwell':'no exit yet'}</span></figcaption></figure>`).join('')}</div></div>`).join('')||'<p class="empty">no customers yet</p>'}</div>
     <h2>Staff — time in / out</h2>
-    <div class="stafflist">${sd.map(s=>`<div class="scard"><div class="shead">${thumb(s.crop,'sthumb')}<div><b>${s.code||''}${s.name?' · '+s.name:''}</b><br><span class="hint">${s.first_in||'—'} → ${s.last_out||'—'} · ${s.total_dwell_min}m on floor · ${s.span_min}m span</span></div></div>
+    <div class="stafflist">${sd.map(s=>`<div class="scard"><div class="shead">${thumb(s.crop,'sthumb')}<div><b>${s.code||''}${s.employee_id?` <span class="pidbadge staff">#S${s.employee_id}</span>`:''}${s.name?' · '+s.name:''}</b><br><span class="hint">${s.first_in||'—'} → ${s.last_out||'—'} · ${s.total_dwell_min}m on floor · ${s.span_min}m span</span></div></div>
       <table class="reptable mini2"><thead><tr><th>hour</th><th>in</th><th>out</th><th>dwell</th></tr></thead><tbody>${(s.sightings||[]).map(t=>`<tr><td>${hrf(t.window)}</td><td>${t.in||'—'}</td><td>${t.out||'—'}</td><td>${t.dwell_min}m</td></tr>`).join('')}</tbody></table></div>`).join('')||'<p class="empty">no staff enrolled yet</p>'}</div>`;
 }
 let _hrSeq = 0;
@@ -581,7 +593,7 @@ function detCard(d){
   else if (OUTCOMES.includes(det)) head = RO ? `<div class="dtag sugg">${(det==='staff'&&d.staff_name)?d.staff_name+'?':'suggested'}</div>` : `${nameTag}<button class="confirmbtn" onclick="allocate('${d.window}','${d.camera}',${d.track},'${d.crop||''}','${det}')">✓ confirm</button>`;
   else if (det==='inside') head = RO ? `<div class="dtag sugg">already inside</div>` : `<button class="confirmbtn" title="already counted at the door" onclick="allocate('${d.window}','${d.camera}',${d.track},'${d.crop||''}','duplicate')">✓ already counted</button>`;
   const winb = (DAY && d.window) ? `<span class="winbadge">${(d.window.split('_')[1]||'').replace(/(\d\d)(\d\d)/,'$1:$2')}</span>` : '';   // which hour, in day view
-  return `<div class="ev dcard ${d.confirmed?'resolved':''} ${isSel?'selected':''}">${chk}${frameBtn}${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''} ${winb}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}</div>${head}${menu}</div>`;
+  return `<div class="ev dcard ${d.confirmed?'resolved':''} ${isSel?'selected':''}">${chk}${frameBtn}${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''} ${winb}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}${pidTag(d)}</div>${head}${menu}</div>`;
 }
 function bucketArr(k){ return (DETALL||[]).filter(d=>d.determination===k && detKeep(d)).sort((a,b)=>(a.ist||'').localeCompare(b.ist||'')); }
 function buildBucketCards(k){ return bucketArr(k).map(detCard).join('')||'<p class="empty">none</p>'; }
@@ -637,7 +649,8 @@ function renderStaff(){
         const clk = g.employee_id ? `openMatches(${g.employee_id})` : pick;
         const ttl = g.employee_id ? 'click to see + confirm ALL matches for this person' : 'click to assign this staffer a name';
         const img = (HIDE||!c.crop)?'<div class="nocrop">👤</div>':`<img src="${cropURL(c.crop)}" onclick="event.stopPropagation();${clk}" style="cursor:pointer" title="${ttl}">`;
-        return `<figure>${img}<figcaption>#${c.track} ${c.auto?'🤖':'✋'}${name}${x}</figcaption></figure>`;
+        const sp = g.employee_id ? `<span class="pidbadge staff">#S${g.employee_id}</span>` : '';
+        return `<figure>${img}<figcaption>#${c.track} ${c.auto?'🤖':'✋'}${sp}${name}${x}</figcaption></figure>`;
       }).join('');
       const sub = `${g.tracks.length} sighting${g.tracks.length>1?'s':''}` + (nAuto?` · ${nAuto} auto-found 🤖`:'');
       return `<div class="ev" style="width:auto;min-width:160px;text-align:left">
@@ -816,14 +829,20 @@ async function openMatches(empId){
   MATCH_EMP = empId;
   const r = await fetch('/api/hitl/staff-matches?employee_id='+empId).then(r=>r.json());
   const en = r.enrolled_crop ? cropImg(r.enrolled_crop) : '<div class="nocrop">👤</div>';
-  const cells = (r.matches||[]).map(m=>{
+  const nweak = (r.matches||[]).filter(m=>m.weak).length;
+  const ms = (r.matches||[]).slice().sort((a,b)=>
+       (a.weak?1:0)-(b.weak?1:0)                          // weak suggestions sort LAST
+    || (a.window===WIN?0:1)-(b.window===WIN?0:1)          // the hour you have open shows first
+    || (b.sim||0)-(a.sim||0));                            // then strongest match first
+  const cells = ms.map(m=>{
     const hr = (String(m.window).split('_')[1]||'').replace(/(\d\d)(\d\d)/,'$1:$2');
-    const tag = m.source==='auto' ? ('🤖 auto'+(m.sim?' · '+Math.round(m.sim*100)+'%':'')) : '✋ you marked';
+    const now = m.window===WIN ? '<span class="winbadge now">this hour</span>' : '';
+    const tag = m.source==='auto' ? ('🤖 auto'+(m.sim?' · '+Math.round(m.sim*100)+'%':'')+(m.weak?' ⚠ weak':'')) : '✋ you marked';
     const x = RO?'':`<button class="xtrack" onclick="unstaffMatch('${m.window}',${m.track})">✗ not them</button>`;
-    return `<div class="mcell">${m.crop?cropImg(m.crop):'<div class="nocrop">👤</div>'}<div class="lb"><b>${hr}</b> · #${m.track}<br>${tag}</div>${x}</div>`;
+    return `<div class="mcell${m.weak?' weak':''}">${m.crop?cropImg(m.crop):'<div class="nocrop">👤</div>'}<div class="lb"><b>${hr}</b> ${now} · #${m.track}<br>${tag}</div>${x}</div>`;
   }).join('') || '<p class="empty">no matches found yet</p>';
   $('#matchBody').innerHTML = `<div class="mhead"><figure style="margin:0;text-align:center"><div class="hint">you tagged</div>${en}</figure>
-    <div><b>${r.code||('S'+empId)}</b> · ${(r.matches||[]).length} sighting(s) across the day<br>
+    <div><b>#S${empId}</b> <span class="hint">${r.code||''}</span> · ${(r.matches||[]).length} sighting(s) across the day${nweak?` · <span style="color:var(--warn)">${nweak} weak ⚠ — reject below</span>`:''}<br>
     <span class="hint">reject any face below that isn't this person</span></div></div>
     <div class="mgrid">${cells}</div>`;
   $('#matchModal').classList.add('show');

@@ -93,12 +93,15 @@ def main() -> None:
 
     fb = out / "feedback.json"
     gal = out / "gallery.json"
+    sparams = {}
     try:  # enrolled-staff gallery -> L4 auto-recognises known staff (needs DB; skip if local-only)
         from hitl.store_supabase import SupabaseStore as _S
-        _g = _S(root=args.out_root).get_gallery(args.store)
+        _s = _S(root=args.out_root)
+        _g = _s.get_gallery(args.store)
         if _g:
             gal.write_text(json.dumps(_g), encoding="utf-8")
             print(f"  gallery: {len(_g)} staff embeddings -> auto-recognition ON")
+        sparams = (_s.active_model() or {}).get("params") or {}        # trained thresholds (match the API /rerun)
     except Exception:
         pass
     l4 = [*PY, "stack.l4_visits", "--l1", l1_entry, "--config", args.zones, "--out", str(out)]
@@ -108,6 +111,10 @@ def main() -> None:
         l4 += ["--feedback", str(fb)]
     if interior_dirs and gal.exists():
         l4 += ["--gallery", str(gal)]
+        for flag, key in (("--staff-sim", "staff_sim"), ("--staff-auto-sim", "staff_auto_sim"),
+                          ("--staff-margin", "staff_margin")):         # trained thresholds; else L4 defaults
+            if sparams.get(key):
+                l4 += [flag, str(sparams[key])]
     sh(*l4)
 
     # window.json lets the dashboard re-run L4 on this hour when a human labels it

@@ -161,8 +161,16 @@ def main() -> None:
                          "(cosine sim >= --staff-sim) is auto-tagged staff and dropped from "
                          "customer visits -- cross-hour attendance with no re-marking. Needs --interior.")
     ap.add_argument("--staff-sim", type=float, default=0.6,
-                    help="cosine-sim threshold for gallery auto-recognition (tune if a customer is "
-                         "mis-tagged or a known staffer is missed)")
+                    help="SUGGEST floor for gallery auto-recognition: a match in [--staff-sim, "
+                         "--staff-auto-sim) is a WEAK suggestion that STAYS a customer until a human "
+                         "confirms (tune if a customer is mis-tagged or a known staffer is missed)")
+    ap.add_argument("--staff-auto-sim", type=float, default=0.72,
+                    help="HARD auto floor: a gallery match >= this AND clearing --staff-margin is "
+                         "auto-counted staff (removed from customers). The band [--staff-sim, this) is "
+                         "surfaced as weak, not silently merged -- stops a 0.61 customer becoming staff.")
+    ap.add_argument("--staff-margin", type=float, default=0.05,
+                    help="best-minus-second-best EMPLOYEE sim required for a HARD auto staff tag "
+                         "(anti-merge between two similar staffers; secondary to the hard floor).")
     ap.add_argument("--customer-sim", type=float, default=0.65,
                     help="cosine floor to auto-link a leftover interior track to its door ENTRY "
                          "(customer). Stricter than --staff-sim: no curated gallery, door<->interior gap.")
@@ -239,26 +247,39 @@ def main() -> None:
             e["present"] = best is not None
             e["emb"] = best["emb"] if best else None
             e["int_crop"] = best["crop"] if best else None
-        # auto-recognition: a bridged interior embedding matching an enrolled staffer (sim >= --staff-sim)
-        # is tagged staff and dropped from the customer matching below -- cross-hour attendance, no re-mark
+        # auto-recognition: a bridged interior embedding matching an enrolled staffer. TWO-THRESHOLD band so a
+        # 0.61 customer (no rival staffer -> large margin, but still wrong) is NOT silently merged + uncounted:
+        #   sim >= staff_auto_sim AND margin >= staff_margin -> HARD auto staff (dropped from the customer pool)
+        #   sim in [staff_sim, staff_auto_sim)               -> WEAK suggestion (STAYS a customer, flagged weak)
         if gallery:
             gembs = [(g["employee_id"], np.asarray(g["embedding"], dtype="float32")) for g in gallery]
             survivors = []
             for e in kept:
-                if e["track"] in not_staff:        # human said "not staff" -> stays a customer
+                if e["track"] in not_staff:        # human said "not staff" -> stays a customer, no suggestion
                     survivors.append(e)
                     continue
-                eid, esim = None, args.staff_sim
+                best_by_emp = {}                              # best shot PER employee (a gallery holds many shots each)
                 if e.get("emb") is not None:
                     for gid, gemb in gembs:
                         gs = reid.osnet_sim(e["emb"], gemb)
-                        if gs >= esim:
-                            esim, eid = gs, gid
-                if eid is not None:
-                    auto_staff.append({"track": e["track"], "employee_id": eid,
-                                       "sim": round(float(esim), 3), "dir": e["dir"],
-                                       "ist": ist(e["ts"]), "source": "auto",
-                                       "crop": (e.get("int_crop") or e["crop"]).replace("\\", "/")})
+                        if gs > best_by_emp.get(gid, -1.0):
+                            best_by_emp[gid] = gs
+                best_eid = max(best_by_emp, key=best_by_emp.get) if best_by_emp else None
+                ranked = sorted(best_by_emp.values(), reverse=True)
+                best_sim = ranked[0] if ranked else -1.0
+                second_sim = ranked[1] if len(ranked) > 1 else -1.0   # runner-up = a DIFFERENT employee (the true margin)
+                margin = (best_sim - second_sim) if second_sim >= 0 else best_sim
+                rec = {"track": e["track"], "employee_id": best_eid, "sim": round(float(best_sim), 3),
+                       "sim2": round(float(max(second_sim, 0.0)), 3), "margin": round(float(margin), 3),
+                       "dir": e["dir"], "ist": ist(e["ts"]), "source": "auto",
+                       "crop": (e.get("int_crop") or e["crop"]).replace("\\", "/")}
+                if best_eid is not None and best_sim >= args.staff_auto_sim and margin >= args.staff_margin:
+                    rec["weak"] = False                       # HARD auto -> counted staff, leaves the customer pool
+                    auto_staff.append(rec)
+                elif best_eid is not None and best_sim >= args.staff_sim:
+                    survivors.append(e)                       # WEAK -> STAYS a customer (count is correct)...
+                    rec["weak"] = True                        # ...AND surfaced as a flagged staff suggestion
+                    auto_staff.append(rec)
                 else:
                     survivors.append(e)
             kept = survivors
@@ -267,7 +288,7 @@ def main() -> None:
         # seen inside leave the unmatched pool. Conservative: high floor + runner-up margin + greedy 1:1.
         # Counts are untouched -- entries are counted at C05; this only marks the interior track accounted.
         claimed_int = {e.get("int_crop") for e in kept if e.get("int_crop")}
-        claimed_int |= {s["crop"] for s in auto_staff}
+        claimed_int |= {s["crop"] for s in auto_staff if not s.get("weak")}   # weak crops are still customers
         in_events = [e for e in kept if e["dir"] == "in" and e.get("emb") is not None]
         cpairs = []                                                # (sim, margin, it_idx, in_event)
         for i, it in enumerate(interior):
@@ -372,7 +393,9 @@ def main() -> None:
                              "employees": len(employees)},
         "counts": {"visits": len(visits), "still_inside": len(still_inside),
                    "pre_window_exits": len(unmatched_out), "peak_occupancy": peak,
-                   "auto_staff": len(auto_staff), "customer_links": len(customer_links)},
+                   "auto_staff": sum(1 for s in auto_staff if not s.get("weak")),   # HARD auto only
+                   "weak_staff": sum(1 for s in auto_staff if s.get("weak")),       # surfaced, still customers
+                   "customer_links": len(customer_links)},
         "visits": [{"id": v["id"], "in_track": v["in_track"], "out_track": v["out_track"],
                     "in_ist": ist(v["in"]), "out_ist": ist(v["out"]),
                     "dwell_s": round(v["dwell"], 1), "how": v["how"],
@@ -404,7 +427,10 @@ def main() -> None:
     if fb_n:
         print(f"  feedback applied: {len(cannot)} crosses, {len(must)} confirms, {len(employees)} staff")
     if gallery:
-        print(f"  auto-recognised staff (gallery sim>={args.staff_sim:g}, {len(gallery)} embeddings): {len(auto_staff)}")
+        nhard = sum(1 for s in auto_staff if not s.get("weak"))
+        nweak = sum(1 for s in auto_staff if s.get("weak"))
+        print(f"  auto-recognised staff (gallery hard>={args.staff_auto_sim:g}, {len(gallery)} emb): {nhard}"
+              f"  |  weak suggestions [{args.staff_sim:g},{args.staff_auto_sim:g}) kept as customers: {nweak}")
     print(f"  completed visits (in+out paired): {len(visits)}")
     if dwell_list:
         print(f"  dwell  mean {np.mean(dwell_list)/60:.1f} min  |  median {np.median(dwell_list)/60:.1f} min "

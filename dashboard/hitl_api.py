@@ -87,9 +87,11 @@ def _rerun_l4(window: str) -> None:
                 galp = _window_dir(window) / "gallery.json"
                 galp.write_text(json.dumps(gal), encoding="utf-8")
                 cmd += ["--gallery", str(galp)]
-                thr = ((store.active_model() or {}).get("params") or {}).get("staff_sim")
-                if thr:                                # use the trained threshold, not the default 0.6
-                    cmd += ["--staff-sim", str(thr)]
+                sp = (store.active_model() or {}).get("params") or {}  # trained thresholds, not the L4 defaults
+                for flag, key in (("--staff-sim", "staff_sim"), ("--staff-auto-sim", "staff_auto_sim"),
+                                  ("--staff-margin", "staff_margin")):
+                    if sp.get(key):
+                        cmd += [flag, str(sp[key])]
         except Exception:
             pass
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -146,7 +148,7 @@ def visits(window: str) -> dict:
     except Exception:
         auto = []
     for a in auto:
-        if a["track"] in not_staff:                     # user said this auto-match is wrong -> hide it
+        if a.get("weak") or a["track"] in not_staff:    # weak band stays a customer; rejected auto -> hide
             continue
         g = _grp(a.get("employee_id"))
         if a["track"] not in g["tracks"]:
@@ -392,15 +394,39 @@ def _classify_detections(window: str, with_dims: bool = True) -> list:
         accounted.add(("C05", e["track"]))
         if camtrack(e.get("crop")):
             accounted.add(camtrack(e.get("crop")))
+    weak_staff = set()                                          # gallery hit in the SUGGEST band -> stays a customer, flagged
     for st in vj.get("staff", []):
+        ct = camtrack(st.get("crop"))
+        if st.get("weak"):                                      # NOT accounted/staff_emp -> remains a customer to confirm
+            weak_staff.add(("C05", st["track"]))
+            if ct:
+                weak_staff.add(ct)
+            continue
         accounted.add(("C05", st["track"]))
         staff_emp[("C05", st["track"])] = st.get("employee_id")
-        if camtrack(st.get("crop")):
-            accounted.add(camtrack(st.get("crop")))
-            staff_emp[camtrack(st.get("crop"))] = st.get("employee_id")
+        if ct:
+            accounted.add(ct)
+            staff_emp[ct] = st.get("employee_id")
     for l in vj.get("links", []):                               # interior auto-linked to its door entry
         accounted.add(("C05", l["in_track"]))
         accounted.add((l["cam"], l["track"]))                   # the interior track -> accounted (suggested customer)
+    cust_pid = {}                                               # (cam,track) -> "C{in_track}" — per-visit customer tag (THIS window only)
+    for v in vj.get("visits", []):
+        pid = f"C{v['in_track']}"
+        cust_pid[("C05", v["in_track"])] = pid
+        cust_pid[("C05", v["out_track"])] = pid
+        for c in (v.get("in_crop"), v.get("out_crop")):
+            if camtrack(c):
+                cust_pid[camtrack(c)] = pid
+    for e in vj.get("open_sessions", []) + vj.get("pre_window_exits", []):
+        pid = f"C{e['track']}"
+        cust_pid[("C05", e["track"])] = pid
+        if camtrack(e.get("crop")):
+            cust_pid[camtrack(e.get("crop"))] = pid
+    for l in vj.get("links", []):
+        pid = f"C{l['in_track']}"
+        cust_pid[("C05", l["in_track"])] = pid
+        cust_pid[(l["cam"], l["track"])] = pid
     labels = store.get_labels(window)
     not_staff = {l["in_track"] for l in labels
                  if str(l.get("visit_id", "")).startswith("notstaff-") and l.get("verdict") == "reject"
@@ -455,11 +481,13 @@ def _classify_detections(window: str, with_dims: bool = True) -> list:
                 det = ann_cat if conf else sugg
             cropr = (t.get("crop", "") or "").replace("\\", "/")
             cw, ch = _crop_dims(cropr) if with_dims else (None, None)   # day view skips per-crop header reads
+            pid = f"S{staff_emp[key]}" if staff_emp.get(key) else cust_pid.get(key)   # stable #S{id} for staff, else per-visit #C{entry}
             out.append({"camera": cam, "track": t["track"], "window": window, "ist": t.get("first_ist"), "dur_s": dur,
                         "crop": cropr, "crop_w": cw, "crop_h": ch,
                         "disposition": disp, "staff": key in staff_emp, "annotation": ann_cat,
                         "parked": key in parked, "suggested": sugg, "confirmed": conf,
-                        "determination": det, "employee_id": staff_emp.get(key)})
+                        "determination": det, "employee_id": staff_emp.get(key),
+                        "pid": pid, "weak_staff": key in weak_staff})
     return out
 
 
@@ -1150,7 +1178,7 @@ def _day_report(date: str, windows=None) -> dict:
     rich = []                                                          # one per entry, aligned with sess session_ids
     for e in entries:
         i = cinfo.get(e["window"], {}).get(e["track"], {})
-        rich.append({"window": e["window"], "track": e["track"], "in_ist": e["ist"],
+        rich.append({"window": e["window"], "track": e["track"], "in_ist": e["ist"], "pid": f"C{e['track']}",
                      "out_ist": i.get("out_ist"), "dwell_s": i.get("dwell_s"), "crop": i.get("crop")})
     customer_groups = []
     for g in groups:
@@ -1205,7 +1233,7 @@ def _day_report(date: str, windows=None) -> dict:
         times = [t for t in times if t]
         fi, lo = (min(times), max(times)) if times else (None, None)
         span = (secs(lo) - secs(fi)) if (fi and lo) else 0
-        staff_detail.append({"code": rank.get(a["id"], a.get("code")), "name": a.get("name"),
+        staff_detail.append({"employee_id": a["id"], "code": rank.get(a["id"], a.get("code")), "name": a.get("name"),
                              "crop": gal.get(a["id"]) or next((t["crop"] for t in tl if t.get("crop")), None),
                              "first_in": fi, "last_out": lo,
                              "span_min": round(span / 60, 1), "total_dwell_min": round(total / 60, 1),

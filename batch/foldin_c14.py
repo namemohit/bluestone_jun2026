@@ -69,14 +69,14 @@ def foldin(window: str, clip: str, clip_start: datetime, fps: float, store: str,
         interior.append(str(l1c14))
 
     gal = out / "gallery.json"                                         # current enrolled-staff gallery
-    staff_sim = None
+    sparams = {}
     try:
         from hitl.store_supabase import SupabaseStore as _S
         s = _S(root=out_root)
         g = s.get_gallery(store)
         if g:
             gal.write_text(json.dumps(g), encoding="utf-8")
-        staff_sim = ((s.active_model() or {}).get("params") or {}).get("staff_sim")  # trained threshold (match the API /rerun, not the 0.6 default)
+        sparams = (s.active_model() or {}).get("params") or {}         # trained thresholds (match the API /rerun, not the L4 defaults)
     except Exception:
         pass
 
@@ -87,8 +87,10 @@ def foldin(window: str, clip: str, clip_start: datetime, fps: float, store: str,
         l4 += ["--feedback", str(fb)]
     if gal.exists():
         l4 += ["--gallery", str(gal)]
-        if staff_sim:                                                  # else default 0.6 over-recognises interior staff
-            l4 += ["--staff-sim", str(staff_sim)]
+        for flag, key in (("--staff-sim", "staff_sim"), ("--staff-auto-sim", "staff_auto_sim"),
+                          ("--staff-margin", "staff_margin")):         # trained thresholds; else L4 defaults
+            if sparams.get(key):
+                l4 += [flag, str(sparams[key])]
     sh(*l4)
 
     cfg["interior"] = interior

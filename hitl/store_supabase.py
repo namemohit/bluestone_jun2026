@@ -296,7 +296,7 @@ class SupabaseStore:
         for win, tr in manual:
             if (win, tr) not in notstaff:
                 matches.append({"window": win, "track": tr, "source": "manual",
-                                "crop": gcrop.get((win, tr)) or enrolled, "sim": None})
+                                "crop": gcrop.get((win, tr)) or enrolled, "sim": None, "weak": False})
         for vj in sorted(pathlib.Path(self.root).glob("*/visits.json")):
             win = vj.parent.name
             try:
@@ -306,8 +306,11 @@ class SupabaseStore:
             for st in staff:
                 if st.get("employee_id") == employee_id and (win, st.get("track")) not in notstaff:
                     matches.append({"window": win, "track": st["track"], "source": "auto",
-                                    "crop": st.get("crop"), "sim": st.get("sim")})
-        matches.sort(key=lambda m: (m["window"], m["track"]))
+                                    "crop": st.get("crop"), "sim": st.get("sim"),
+                                    "sim2": st.get("sim2"), "weak": bool(st.get("weak"))})
+        matches.sort(key=lambda m: (m.get("weak", False),         # weak suggestions last
+                                    m["source"] != "manual",      # your manual marks first
+                                    -(m.get("sim") or 0)))         # then strongest auto first
         return {"enrolled_crop": enrolled, "matches": matches}
 
     def attendance(self, store_id: str = "s14", date: str | None = None) -> list[dict]:
@@ -335,8 +338,8 @@ class SupabaseStore:
             except Exception:
                 continue
             for st in staff:
-                if st.get("employee_id") is not None and st.get("track") is not None:
-                    sightings.setdefault((st["employee_id"], win, st["track"]), "auto")
+                if st.get("employee_id") is not None and st.get("track") is not None and not st.get("weak"):
+                    sightings.setdefault((st["employee_id"], win, st["track"]), "auto")   # weak band isn't attendance
         det = {}                                                        # (window, track) -> door detection
         keys = {(w, t) for (_, w, t) in sightings}
         if keys:
