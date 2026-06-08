@@ -699,10 +699,27 @@ def training() -> dict:
 _ALLOC_CATS = ("customer", "staff", "not_person", "passby", "duplicate")
 
 
+def _existing_employee_id(window, track):
+    """Which employee a track is already attributed to (auto-recognised or previously marked) — so a
+    plain 'confirm staff' keeps that identity instead of writing an unattributed staff label."""
+    for l in store.get_labels(window):
+        if l.get("verdict") == "employee" and l.get("in_track") == track and l.get("employee_id"):
+            return l["employee_id"]
+    try:
+        for s in json.loads((OUTPUTS / window / "visits.json").read_text(encoding="utf-8")).get("staff", []):
+            if s.get("track") == track and s.get("employee_id"):
+                return s["employee_id"]
+    except Exception:
+        pass
+    return None
+
+
 def _alloc_one(window, camera, track, category, crop, emp_id, duplicate_of=None) -> bool:
     """Record ONE allocation — durable annotation (+ training crop) and, for a door (C05) track, the
     matcher label that drives the count. Does NOT re-run L4. Returns True if it touched a C05 track
     (so the caller knows an L4 re-run is needed)."""
+    if category == "staff" and not emp_id:
+        emp_id = _existing_employee_id(window, track)          # a plain confirm keeps the known identity
     store.add_annotation(window, camera, track, category, crop_url=crop, employee_id=emp_id,
                          duplicate_of=duplicate_of, embedding=_emb_for_crop(crop))
     if category == "staff" and emp_id and crop:
