@@ -198,7 +198,7 @@
 <script>
 const $ = s => document.querySelector(s);
 const cropURL = p => `/api/hitl/crop?path=${encodeURIComponent(p)}`;
-let WIN = null, sel = {open:null, pre:null}, RO = false, HIDE = false;
+let WIN = null, sel = {open:null, pre:null}, RO = false, HIDE = false, DAY = false;
 // faces are hidden only when the server says so (unprotected public view); a password unhides them
 const cropImg = p => HIDE ? '<div class="nocrop" title="face hidden on this view">👤</div>' : `<img src="${cropURL(p)}" onclick="event.stopPropagation();zoom('${p}')" style="cursor:zoom-in" title="click to enlarge">`;
 
@@ -211,12 +211,14 @@ async function loadWindows() {
   RO = !!r.readonly; HIDE = !!r.hide_faces;
   if (RO) { document.querySelector('header h1').innerHTML = '🛍️ Showroom · Live Results <span style="font-size:11px;color:var(--dim)">(read-only)</span>'; }
   const sel = $('#win');
-  sel.innerHTML = r.windows.map(w=>`<option value="${w.window}">${w.window} · ${w.visits} visits</option>`).join('');
+  const dates = [...new Set(r.windows.map(w=>String(w.window).split('_')[0]).filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(x)))].sort();
+  sel.innerHTML = dates.map(dt=>`<option value="${dt}">📅 Whole day · ${dt}</option>`).join('')
+                + r.windows.map(w=>`<option value="${w.window}">${w.window} · ${w.visits} visits</option>`).join('');
   if (r.windows.length) {
     const dated = r.windows.filter(w=>/^\d{4}-\d{2}-\d{2}_\d/.test(w.window)); // real processed hours
     const pool = dated.length ? dated : r.windows;
     const best = pool.reduce((a,b)=>(b.visits||0)>(a.visits||0)?b:a, pool[0]);
-    if (!WIN || !r.windows.some(w=>w.window===WIN)) WIN = best.window; // keep current selection across refresh
+    if (!WIN || (!r.windows.some(w=>w.window===WIN) && !dates.includes(WIN))) WIN = best.window; // keep selection (incl. a whole-day pick)
     sel.value = WIN; load();
   } else $('#visits').innerHTML = '<p class="empty">No processed windows yet.</p>';
 }
@@ -237,7 +239,9 @@ function metricsHTML(m){
 
 async function load(){
   WIN = $('#win').value || WIN;
-  const d = await fetch(`/api/hitl/visits/${WIN}`).then(r=>r.json());
+  DAY = /^\d{4}-\d{2}-\d{2}$/.test(WIN);   // a date (no _HHMM) = whole-day rollup
+  if (DAY) $('#visits').innerHTML = '<p class="hint">aggregating the whole day…</p>';
+  const d = await fetch(DAY ? `/api/hitl/visits-day/${WIN}` : `/api/hitl/visits/${WIN}`).then(r=>r.json());
   $('#metrics').innerHTML = metricsHTML(d.metrics||{});
   // visit cards
   $('#visits').innerHTML = (d.visits||[]).map(v=>{
@@ -255,7 +259,7 @@ async function load(){
         <div class="bar"><i style="width:${Math.round((v.confidence||0)*100)}%"></i></div>
         ${tag}
       </div>
-      ${RO ? '' : `<div class="btns">
+      ${(RO||DAY) ? '' : `<div class="btns">
         <button class="ok" onclick="label('${v.id}','confirm',${v.in_track},${v.out_track})">✓ Same person</button>
         <button class="no" onclick="label('${v.id}','reject',${v.in_track},${v.out_track})">✗ Wrong match</button>
         <button onclick="openStaffPicker('${v.id}',${v.in_track},'${v.in_crop}')">👤 Staff</button>
@@ -268,7 +272,7 @@ async function load(){
   $('#staff').innerHTML = (d.staff||[]).map(g=>{
       const lab = g.employee_id ? `${g.code||('S'+g.employee_id)}${g.name?' · '+g.name:''}` : 'unassigned';
       const nAuto = (g.auto_tracks||[]).length;
-      const act = RO ? '' : (g.employee_id ? `<button onclick="renameStaff(${g.employee_id})">✎ name</button> ` : '')
+      const act = (RO||DAY) ? '' : (g.employee_id ? `<button onclick="renameStaff(${g.employee_id})">✎ name</button> ` : '')
                           + `<button onclick="unstaffGroup('${(g.visit_ids||[]).join('|')}')">↩ not staff</button>`;
       const imgs = (g.crops||[]).map(c=>{
         const x = RO?'':`<button class="xtrack" title="not this person — back to customers" onclick="event.stopPropagation();unstaffTrack(${c.track})">✗</button>`;
@@ -320,6 +324,7 @@ async function loadReport(){
 let DETS_LOADED=false, DETDATA=null, DETF={cams:{C05:1,C11:1,C14:1}, minDur:0};
 async function loadDetections(){
   DETS_LOADED = true;
+  if (DAY){ $('#dets').innerHTML = '<p class="hint">All-Detections is per-hour — pick a specific hour in the dropdown to resolve detections.</p>'; return; }
   $('#dets').innerHTML = '<p class="hint">loading…</p>';
   const r = await fetch('/api/hitl/detections/'+encodeURIComponent(WIN)+'?grouped=1').then(r=>r.json()).catch(()=>({grouped:false,detections:[]}));
   if (!r.grouped){ $('#dets').innerHTML = (r.detections||[]).map(detHTML).join('')||'<p class="empty">none</p>'; return; }
@@ -381,8 +386,8 @@ function detHTML(d){
 
 function evHTML(kind,e){
   const on = sel[kind] && sel[kind].track===e.track ? 'sel' : '';
-  const click = RO ? '' : `onclick="pick('${kind}',${e.track},'${e.crop}')"`;
-  const btn = RO ? '' : `<button onclick="event.stopPropagation();openStaffPicker('open-${e.track}',${e.track},'${e.crop}')">👤 staff</button>`;
+  const click = (RO||DAY) ? '' : `onclick="pick('${kind}',${e.track},'${e.crop}')"`;
+  const btn = (RO||DAY) ? '' : `<button onclick="event.stopPropagation();openStaffPicker('open-${e.track}',${e.track},'${e.crop}')">👤 staff</button>`;
   return `<div class="ev ${on}" ${click}>
     ${cropImg(e.crop)}<div class="lb">${e.ist}<br>#${e.track}</div>${btn}</div>`;
 }

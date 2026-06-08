@@ -37,6 +37,13 @@ class LocalStore:
         p = self._wdir(window) / "labels.json"
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
 
+    # batched multi-window reads (local file reads are already cheap, so just loop)
+    def get_visits_many(self, windows: list[str]) -> dict:
+        return {w: self.get_visits(w) for w in windows}
+
+    def get_labels_many(self, windows: list[str]) -> dict:
+        return {w: self.get_labels(w) for w in windows}
+
     # ---- writes ---------------------------------------------------------
     def add_label(self, window: str, visit_id: str, verdict: str, *, reason: str = "",
                   in_track=None, out_track=None, reviewer: str = "human", employee_id=None) -> dict:

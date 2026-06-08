@@ -192,6 +192,76 @@ def visits(window: str) -> dict:
     return data
 
 
+@router.get("/visits-day/{date}")
+def visits_day(date: str) -> dict:
+    """Whole-day rollup of the Review sections across the date's hourly windows (read-only overview)."""
+    if not date or "/" in date or "\\" in date or ".." in date:
+        raise HTTPException(400, "bad date")
+    import glob
+    windows = sorted({Path(p).parent.name for p in glob.glob(f"outputs/{date}_*/visits.json")})
+    emp_map = {e["id"]: e for e in store.list_employees()}
+    rank = {e["id"]: i + 1 for i, e in enumerate(sorted(emp_map.values(), key=lambda x: x["id"]))}
+    agg = {"visits": [], "open_sessions": [], "pre_window_exits": [], "entries": [], "day": True}
+    staff_by_emp = {}
+    met = {"visits": 0, "reviewed": 0, "confirmed": 0, "rejected": 0, "unreviewed": 0}
+
+    def _grp(eid):
+        return staff_by_emp.setdefault(eid, {"employee_id": eid,
+            "code": f"Staff #{rank[eid]}" if eid in rank else (emp_map.get(eid) or {}).get("code"),
+            "name": (emp_map.get(eid) or {}).get("name"), "tracks": [], "visit_ids": [],
+            "auto_tracks": [], "crops": []})
+
+    vmap = store.get_visits_many(windows)               # one round-trip each for the whole day
+    lmap = store.get_labels_many(windows)
+    for win in windows:
+        data = vmap.get(win, {"visits": [], "open_sessions": [], "pre_window_exits": []})
+        labels = {l["visit_id"]: l for l in lmap.get(win, [])}
+        not_staff = {l["in_track"] for l in labels.values()
+                     if str(l.get("visit_id", "")).startswith("notstaff-") and l.get("verdict") == "reject"
+                     and l.get("in_track") is not None}
+        vis = data.get("visits", [])
+        for v in vis:
+            vd = labels.get(v["id"], {}).get("verdict")
+            agg["visits"].append({**v, "label": None if vd == "reset" else vd, "window": win})
+        for e in data.get("open_sessions", []):
+            agg["open_sessions"].append({**e, "window": win})
+        for e in data.get("pre_window_exits", []):
+            agg["pre_window_exits"].append({**e, "window": win})
+        agg["entries"] += [{"track": v["in_track"], "ist": v["in_ist"], "crop": v["in_crop"],
+                            "matched": True, "window": win} for v in vis]
+        agg["entries"] += [{"track": e["track"], "ist": e["ist"], "crop": e["crop"],
+                            "matched": False, "window": win} for e in data.get("open_sessions", [])]
+        manual = set()
+        for l in labels.values():
+            if l.get("verdict") == "employee" and l.get("in_track") is not None and l["in_track"] not in not_staff:
+                _grp(l.get("employee_id"))["tracks"].append(l["in_track"])
+                manual.add(l["in_track"])
+        try:
+            auto = json.loads((OUTPUTS / win / "visits.json").read_text(encoding="utf-8")).get("staff", [])
+        except Exception:
+            auto = []
+        for a in auto:
+            if a["track"] in not_staff:
+                continue
+            g = _grp(a.get("employee_id"))
+            if a["track"] not in g["tracks"]:
+                g["tracks"].append(a["track"])
+            if a["track"] not in manual:
+                g["auto_tracks"].append(a["track"])
+            if a.get("crop"):
+                g["crops"].append({"track": a["track"], "crop": a["crop"], "auto": a["track"] not in manual})
+        reviewed = [v for v in vis if v["id"] in labels and labels[v["id"]]["verdict"] != "reset"]
+        conf = sum(1 for v in reviewed if labels[v["id"]]["verdict"] in ("confirm", "employee"))
+        met["visits"] += len(vis); met["reviewed"] += len(reviewed); met["confirmed"] += conf
+        met["rejected"] += len(reviewed) - conf; met["unreviewed"] += len(vis) - len(reviewed)
+    agg["staff"] = sorted(staff_by_emp.values(), key=lambda g: (g["employee_id"] or 0))
+    agg["entries"].sort(key=lambda e: e.get("ist") or "")
+    agg["visits"].sort(key=lambda v: v.get("in_ist") or "")
+    met["precision"] = round(met["confirmed"] / met["reviewed"], 3) if met["reviewed"] else None
+    agg["metrics"] = met
+    return agg
+
+
 @router.get("/detections/{window}")
 def detections(window: str, grouped: int = 0) -> dict:
     """L1 — every human the cameras detected (door + interior). grouped=1 returns a RECONCILIATION

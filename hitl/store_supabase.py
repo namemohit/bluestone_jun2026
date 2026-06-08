@@ -163,6 +163,43 @@ class SupabaseStore:
                         "from latest_labels where window_id=%s", (window,))
             return [dict(r) for r in cur.fetchall()]
 
+    # --- batched multi-window reads (one round-trip for the whole day, not one per hour) ---
+    def get_visits_many(self, windows: list[str]) -> dict:
+        out = {w: {"visits": [], "open_sessions": [], "pre_window_exits": []} for w in windows}
+        if not windows:
+            return out
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute(
+                "select window_id, id,in_track,out_track,dwell_s::float,how,confidence::float,uncertainty::float,status,"
+                "to_char(in_ist at time zone 'Asia/Kolkata','HH24:MI:SS') in_ist,"
+                "to_char(out_ist at time zone 'Asia/Kolkata','HH24:MI:SS') out_ist,"
+                "in_crop_url in_crop, out_crop_url out_crop from visits "
+                "where window_id = ANY(%s) order by uncertainty desc nulls last", (list(windows),))
+            for r in cur.fetchall():
+                r = dict(r)
+                out.setdefault(r.pop("window_id"),
+                               {"visits": [], "open_sessions": [], "pre_window_exits": []})["visits"].append(r)
+            cur.execute("select window_id, track, to_char(ts_ist at time zone 'Asia/Kolkata','HH24:MI:SS') ist,"
+                        " crop_url crop, role from events where window_id = ANY(%s) and role in ('open','pre_exit') "
+                        "order by ts_ist", (list(windows),))
+            for e in cur.fetchall():
+                tgt = "open_sessions" if e["role"] == "open" else "pre_window_exits"
+                out.setdefault(e["window_id"], {"visits": [], "open_sessions": [], "pre_window_exits": []})[tgt]\
+                    .append({"track": e["track"], "ist": e["ist"], "crop": e["crop"]})
+        return out
+
+    def get_labels_many(self, windows: list[str]) -> dict:
+        out = {w: [] for w in windows}
+        if not windows:
+            return out
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("select window_id, visit_id, verdict, reason, in_track, out_track, reviewer, employee_id "
+                        "from latest_labels where window_id = ANY(%s)", (list(windows),))
+            for r in cur.fetchall():
+                r = dict(r)
+                out.setdefault(r.pop("window_id"), []).append(r)
+        return out
+
     def get_detections(self, window: str) -> list[dict]:
         with self._cx() as cx, cx.cursor() as cur:
             cur.execute("select camera, track, to_char(first_ist at time zone 'Asia/Kolkata','HH24:MI:SS') ist,"
