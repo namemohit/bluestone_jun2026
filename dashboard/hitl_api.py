@@ -1064,12 +1064,30 @@ def rerun(body: dict) -> dict:
             "model": store.active_model()}
 
 
+def _entry_crop_info(window):
+    """track -> {crop, out_ist, dwell_s} from a window's visits.json (enriches the report's customer list)."""
+    try:
+        data = json.loads((OUTPUTS / window / "visits.json").read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    info = {}
+    for v in data.get("visits", []):
+        info[v["in_track"]] = {"crop": (v.get("in_crop") or "").replace("\\", "/"),
+                               "out_ist": v.get("out_ist"), "dwell_s": v.get("dwell_s")}
+    for e in data.get("open_sessions", []):
+        info.setdefault(e["track"], {"crop": (e.get("crop") or "").replace("\\", "/"),
+                                     "out_ist": None, "dwell_s": None})
+    return info
+
+
 def _day_report(date: str, windows=None) -> dict:
     """The B2B deliverable: human-confirmed unique customers + groups + dwell, and per-employee
     check-in/out. Reuses logic.grouping.group_sessions + store.attendance. Pass `windows` to scope
-    to a subset (e.g. a single hour for an hour-level publish)."""
+    to a subset (e.g. a single hour for an hour-level publish). The 'customers'/'employees' fields
+    are kept stable (publish flow + tests); rich detail is added in extra keys."""
     import glob
     import statistics
+    from collections import Counter
     from types import SimpleNamespace
     from logic.grouping import group_sessions
     entries, dwell = [], []
@@ -1095,6 +1113,65 @@ def _day_report(date: str, windows=None) -> dict:
     timesheets = [{"employee": rank.get(a["id"], a.get("code")) + (" · " + a["name"] if a.get("name") else ""),
                    "check_in": a.get("first_seen"), "check_out": a.get("last_seen"),
                    "hours": a.get("windows")} for a in att if a.get("sightings")]
+
+    # ---- rich detail (ADDITIVE; the stable fields above are untouched) ----
+    cinfo = {win: _entry_crop_info(win) for win in windows}
+    rich = []                                                          # one per entry, aligned with sess session_ids
+    for e in entries:
+        i = cinfo.get(e["window"], {}).get(e["track"], {})
+        rich.append({"window": e["window"], "track": e["track"], "in_ist": e["ist"],
+                     "out_ist": i.get("out_ist"), "dwell_s": i.get("dwell_s"), "crop": i.get("crop")})
+    customer_groups = []
+    for g in groups:
+        mems = sorted([rich[sid] for sid in g["session_ids"]], key=lambda m: secs(m["in_ist"]))
+        if len(mems) > 1:
+            spread = max(secs(m["in_ist"]) for m in mems) - min(secs(m["in_ist"]) for m in mems)
+            reason = f"arrived together (within {spread}s)"
+        else:
+            reason = "arrived alone"
+        customer_groups.append({"group_id": g["group_id"], "size": g["size"], "reason": reason, "members": mems})
+    hot_leads = sorted([r for r in rich if r.get("dwell_s")], key=lambda r: r["dwell_s"], reverse=True)[:8]
+    dwell_segments = {"browsers": sum(1 for d in dwell if d < 120),          # <2 min
+                      "engaged": sum(1 for d in dwell if 120 <= d < 600),    # 2-10 min
+                      "serious": sum(1 for d in dwell if d >= 600)}          # >10 min = hot
+    bh = Counter()
+    for e in entries:
+        hh = str(e["ist"])[:2]
+        if hh.isdigit():
+            bh[hh] += 1
+    footfall_by_hour = [{"hour": h + ":00", "entries": bh[h]} for h in sorted(bh)]
+    peak_occupancy = 0
+    for win in windows:
+        try:
+            c = json.loads((OUTPUTS / win / "visits.json").read_text(encoding="utf-8")).get("counts", {})
+            peak_occupancy = max(peak_occupancy, c.get("peak_occupancy", 0) or 0)
+        except Exception:
+            pass
+    passersby = 0                                                     # window-conversion: who walked past vs entered
+    for win in windows:
+        try:
+            passersby += sum(1 for d in _classify_detections(win, with_dims=False) if d.get("determination") == "passby")
+        except Exception:
+            pass
+    footfall = len(entries)
+    capture_rate = round(100 * footfall / (footfall + passersby), 1) if (footfall + passersby) else None
+    staff_detail = []                                                # per staffer: each in/out -> dwell, total, span
+    for a in att:
+        if not a.get("sightings"):
+            continue
+        tl, total = [], 0
+        for w in a.get("timeline", []):
+            dw = max(0, secs(w.get("out")) - secs(w.get("in")))
+            total += dw
+            tl.append({"window": w["window"], "in": w.get("in"), "out": w.get("out"),
+                       "dwell_min": round(dw / 60, 1), "crop": w.get("crop")})
+        span = (secs(a.get("last_seen")) - secs(a.get("first_seen"))) if (a.get("first_seen") and a.get("last_seen")) else 0
+        staff_detail.append({"code": rank.get(a["id"], a.get("code")), "name": a.get("name"),
+                             "crop": next((t["crop"] for t in tl if t.get("crop")), None),
+                             "first_in": a.get("first_seen"), "last_out": a.get("last_seen"),
+                             "span_min": round(span / 60, 1), "total_dwell_min": round(total / 60, 1),
+                             "sightings": tl})
+
     return {
         "date": date, "windows": len(windows),
         "customers": {
@@ -1106,6 +1183,13 @@ def _day_report(date: str, windows=None) -> dict:
                           "median": round(statistics.median(dwell) / 60, 1) if dwell else None},
         },
         "employees": {"headcount": len(timesheets), "timesheets": timesheets},
+        # ---- rich sections for the redesigned report (additive) ----
+        "kpis": {"footfall": footfall, "passersby": passersby, "capture_rate": capture_rate,
+                 "peak_occupancy": peak_occupancy, "groups": len(groups),
+                 "avg_dwell_min": round(statistics.mean(dwell) / 60, 1) if dwell else None,
+                 "staff_on_duty": len(timesheets)},
+        "footfall_by_hour": footfall_by_hour, "customer_groups": customer_groups,
+        "hot_leads": hot_leads, "dwell_segments": dwell_segments, "staff_detail": staff_detail,
     }
 
 
