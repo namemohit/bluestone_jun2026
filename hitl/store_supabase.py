@@ -507,6 +507,19 @@ class SupabaseStore:
                         "from latest_published where store_id=%s order by period desc, scope", (store_id,))
             return [dict(r) for r in cur.fetchall()]
 
+    def published_history(self, store_id: str = "s14", limit: int = 50) -> list[dict]:
+        """Every publish (append-only), newest first, with the key numbers pulled from each frozen
+        report — the repository the Report tab shows to track progress over time."""
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("select period, scope, model_version, "
+                        "to_char(published_at at time zone 'Asia/Kolkata','YYYY-MM-DD HH24:MI') published_at, "
+                        "(report->'customers'->>'unique_customers')::int customers, "
+                        "(report->'employees'->>'headcount')::int employees, "
+                        "(report->'customers'->'groups'->>'count')::int groups "
+                        "from published_reports where store_id=%s order by published_at desc limit %s",
+                        (store_id, limit))
+            return [dict(r) for r in cur.fetchall()]
+
     def get_published(self, period: str, scope: str = "day", store_id: str = "s14") -> dict | None:
         with self._cx() as cx, cx.cursor() as cur:
             cur.execute("select report, model_version, "

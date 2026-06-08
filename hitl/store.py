@@ -179,5 +179,8 @@ class LocalStore:
     def list_published(self, store_id: str = "s14") -> list[dict]:
         return []
 
+    def published_history(self, store_id: str = "s14", limit: int = 50) -> list[dict]:
+        return []
+
     def get_published(self, period, scope="day", store_id: str = "s14") -> dict | None:
         return None

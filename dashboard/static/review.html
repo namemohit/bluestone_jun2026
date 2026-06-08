@@ -147,6 +147,7 @@
   .okbox { background:rgba(55,184,106,.12); border:1px solid rgba(55,184,106,.4); border-radius:10px; padding:11px 13px; margin:10px 0; font-size:13px; color:var(--ink); }
   .okbox.warn { background:rgba(227,160,43,.12); border-color:rgba(227,160,43,.45); }
   .okbox.bad { background:rgba(224,83,61,.12); border-color:rgba(224,83,61,.45); }
+  .winbadge { display:inline-block; font-size:10px; color:var(--dim); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:1px 7px; margin-top:8px; letter-spacing:.03em; }
 </style>
 </head>
 <body>
@@ -257,7 +258,7 @@ async function load(){
   WIN = $('#win').value || WIN;
   LS.set('win', WIN);                       // remember the chosen view across refreshes
   DAY = /^\d{4}-\d{2}-\d{2}$/.test(WIN);   // a date (no _HHMM) = whole-day rollup
-  if (DAY) $('#visits').innerHTML = '<p class="hint">aggregating the whole day…</p>';
+  if (DAY && !document.querySelector('#visits .card')) $('#visits').innerHTML = '<p class="hint">aggregating the whole day…</p>';
   const d = await fetch(DAY ? `/api/hitl/visits-day/${WIN}` : `/api/hitl/visits/${WIN}`).then(r=>r.json());
   $('#metrics').innerHTML = metricsHTML(d.metrics||{});
   // visit cards
@@ -276,11 +277,12 @@ async function load(){
         <div class="bar"><i style="width:${Math.round((v.confidence||0)*100)}%"></i></div>
         ${tag}
       </div>
-      ${(RO||DAY) ? '' : `<div class="btns">
-        <button class="ok" onclick="label('${v.id}','confirm',${v.in_track},${v.out_track})">✓ Same person</button>
-        <button class="no" onclick="label('${v.id}','reject',${v.in_track},${v.out_track})">✗ Wrong match</button>
-        <button onclick="openStaffPicker('${v.id}',${v.in_track},'${v.in_crop}')">👤 Staff</button>
+      ${RO ? '' : `<div class="btns">
+        <button class="ok" onclick="label('${v.id}','confirm',${v.in_track},${v.out_track},'${v.window||''}')">✓ Same person</button>
+        <button class="no" onclick="label('${v.id}','reject',${v.in_track},${v.out_track},'${v.window||''}')">✗ Wrong match</button>
+        <button onclick="openStaffPicker('${v.id}',${v.in_track},'${v.in_crop}',null,'${v.window||''}')">👤 Staff</button>
       </div>`}
+      ${DAY && v.window ? `<div class="winbadge">${v.window.split('_')[1]||v.window}</div>` : ''}
     </div>`;
   }).join('') || '<p class="empty">No matched visits.</p>';
   // unmatched events
@@ -292,7 +294,7 @@ async function load(){
       const act = (RO||DAY) ? '' : (g.employee_id ? `<button onclick="renameStaff(${g.employee_id})">✎ name</button> ` : '')
                           + `<button onclick="unstaffGroup('${(g.visit_ids||[]).join('|')}')">↩ not staff</button>`;
       const imgs = (g.crops||[]).map(c=>{
-        const x = RO?'':`<button class="xtrack" title="not this person — back to customers" onclick="event.stopPropagation();unstaffTrack(${c.track})">✗</button>`;
+        const x = (RO||DAY)?'':`<button class="xtrack" title="not this person — back to customers" onclick="event.stopPropagation();unstaffTrack(${c.track})">✗</button>`;
         const img = (HIDE||!c.crop)?'<div class="nocrop">👤</div>':`<img src="${cropURL(c.crop)}" onclick="event.stopPropagation();openMatches(${g.employee_id})" style="cursor:pointer" title="click to see + confirm ALL matches for this person">`;
         return `<figure>${img}<figcaption>#${c.track} ${c.auto?'🤖':'✋'}${x}</figcaption></figure>`;
       }).join('');
@@ -324,16 +326,39 @@ function showTab(name, btn){
 async function loadReport(){
   const date = (WIN||'').split('_')[0] || '';
   $('#report').innerHTML = '<p class="hint">building the day report…</p>';
-  const r = await fetch('/api/hitl/report/'+date).then(r=>r.json()).catch(()=>null);
+  const [r, ph] = await Promise.all([
+    fetch('/api/hitl/report/'+date).then(x=>x.json()).catch(()=>null),
+    fetch('/api/hitl/publish-history').then(x=>x.json()).then(x=>x.history||[]).catch(()=>[])
+  ]);
   if (!r){ $('#report').innerHTML = '<p class="empty">could not build the report</p>'; return; }
   const c=r.customers, g=c.groups, e=r.employees, dw=c.dwell_min||{};
   const ts = (e.timesheets||[]).map(t=>`<tr><td>${t.employee}</td><td>${t.check_in||'—'}</td><td>${t.check_out||'—'}</td><td>${t.hours||''}</td></tr>`).join('')
              || '<tr><td colspan="4" class="empty">no staff marked yet</td></tr>';
+  // context: what changed since this day was last published
+  const last = ph.find(p=>p.period===date && p.scope==='day');
+  const chg = d => `<span class="${d>0?'up':d<0?'down':''}">(${d>=0?'+':''}${d})</span>`;
+  let banner;
+  if (last){
+    const dC=c.unique_customers-(last.customers||0), dE=e.headcount-(last.employees||0), dG=g.count-(last.groups||0);
+    banner = `<div class="delta"><b>Since last publish</b> · ${last.published_at} · model v${last.model_version||'?'} &nbsp;—&nbsp;
+      customers ${last.customers??0} → <b>${c.unique_customers}</b> ${chg(dC)} &nbsp;·&nbsp;
+      employees ${last.employees??0} → <b>${e.headcount}</b> ${chg(dE)} &nbsp;·&nbsp;
+      groups ${last.groups??0} → <b>${g.count}</b> ${chg(dG)}
+      ${(dC||dE||dG)?'':'<span class="hint"> — unchanged</span>'}</div>`;
+  } else {
+    banner = `<div class="okbox warn">Not published yet — these are live numbers. Click <b>Publish to client</b> to freeze them as the first snapshot.</div>`;
+  }
+  const repo = ph.length
+    ? `<table class="reptable"><thead><tr><th>period</th><th>scope</th><th>customers</th><th>employees</th><th>groups</th><th>model</th><th>published</th></tr></thead><tbody>
+       ${ph.map(p=>`<tr class="${p.period===date&&p.scope==='day'?'vact':''}"><td>${p.period}</td><td>${p.scope}</td><td>${p.customers??'—'}</td><td>${p.employees??'—'}</td><td>${p.groups??'—'}</td><td>v${p.model_version||'?'}</td><td>${p.published_at}</td></tr>`).join('')}
+       </tbody></table>`
+    : '<p class="hint">nothing published yet</p>';
   $('#report').innerHTML = `
     <div class="rephead"><div class="rtitle">📊 Closed-day report · ${r.date}</div>
       <div class="rbtns">${RO?'':`<button class="ok" onclick="doPublish('${r.date}','day')">📤 Publish to client</button>`}
         <button onclick="window.print()">🖨 Print / PDF</button></div></div>
     <div id="pubmsg"></div>
+    ${banner}
     <div class="repcards">
       <div class="repcard"><div class="big">${c.unique_customers}</div>unique customers</div>
       <div class="repcard"><div class="big">${g.grouped}</div>arrived in groups <span class="hint">(${g.solo} solo)</span></div>
@@ -342,16 +367,18 @@ async function loadReport(){
     </div>
     <h2>Employee attendance</h2>
     <table class="reptable"><thead><tr><th>Employee</th><th>Check-in</th><th>Check-out</th><th>Hours seen</th></tr></thead><tbody>${ts}</tbody></table>
-    <p class="hint" style="margin-top:16px">Customer count = human-confirmed door check-ins across ${r.windows} processed hour(s). Resolve everything in the <b>All Detections</b> tab to finalize the numbers.</p>`;
+    <h2>Published reports — repository</h2>
+    ${repo}
+    <p class="hint" style="margin-top:16px">Customer count = human-confirmed door check-ins across ${r.windows} processed hour(s). Each <b>Publish</b> appends a frozen snapshot above — the trail shows how the numbers firmed up as you resolved detections + trained.</p>`;
 }
 
 async function doPublish(period, scope){
-  const m = $('#pubmsg');
   if (!confirm(`Publish the ${scope} report for ${period} to the client (read-only) dashboard?`)) return;
-  m.innerHTML = '<p class="hint">publishing…</p>';
+  const m = $('#pubmsg'); if (m) m.innerHTML = '<p class="hint">publishing…</p>';
   const r = await fetch('/api/hitl/publish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({period,scope})}).then(r=>r.json()).catch(()=>null);
-  if (!r || !r.ok){ m.innerHTML = '<div class="okbox bad">publish failed</div>'; return; }
-  m.innerHTML = `<div class="okbox">✓ Published <b>${r.period}</b> — ${r.unique_customers} customers · ${r.headcount} employees · model v${r.model_version||'?'}. The read-only client dashboard now serves this snapshot.</div>`;
+  if (!r || !r.ok){ if (m) m.innerHTML = '<div class="okbox bad">publish failed</div>'; return; }
+  showToast(`✓ Published ${r.period} — ${r.unique_customers} customers · v${r.model_version||'?'}`, null);
+  loadReport();   // refresh: the new snapshot appears in the repository + resets the "what changed" banner
 }
 
 async function loadTraining(){
@@ -489,7 +516,7 @@ function detHTML(d){
 function evHTML(kind,e){
   const on = sel[kind] && sel[kind].track===e.track ? 'sel' : '';
   const click = (RO||DAY) ? '' : `onclick="pick('${kind}',${e.track},'${e.crop}')"`;
-  const btn = (RO||DAY) ? '' : `<button onclick="event.stopPropagation();openStaffPicker('open-${e.track}',${e.track},'${e.crop}')">👤 staff</button>`;
+  const btn = RO ? '' : `<button onclick="event.stopPropagation();openStaffPicker('open-${e.track}',${e.track},'${e.crop}',null,'${e.window||''}')">👤 staff</button>`;
   return `<div class="ev ${on}" ${click}>
     ${cropImg(e.crop)}<div class="lb">${e.ist}<br>#${e.track}</div>${btn}</div>`;
 }
@@ -504,15 +531,15 @@ function renderLinkbar(){
 }
 
 const VERB = {confirm:'confirmed ✓', reject:'marked wrong ✗', employee:'marked staff 👤'};
-async function label(id,verdict,inT,outT){
+async function label(id,verdict,inT,outT,win){
   const d = await fetch('/api/hitl/label',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({window:WIN,visit_id:id,verdict,in_track:inT,out_track:outT})}).then(r=>r.json());
-  paint(d);
-  showToast(`Visit ${id} ${VERB[verdict]||verdict}`, ()=>unlabelVisit(id,inT,outT));
+    body:JSON.stringify({window:win||WIN,visit_id:id,verdict,in_track:inT,out_track:outT})}).then(r=>r.json());
+  if (DAY) load(); else paint(d);                 // day view aggregates many windows -> re-aggregate
+  showToast(`Visit ${id} ${VERB[verdict]||verdict}`, ()=>unlabelVisit(id,inT,outT,win));
 }
 let pickCtx = null;
-async function openStaffPicker(visitId, track, crop, camera){
-  pickCtx = {visitId, track, crop, camera};
+async function openStaffPicker(visitId, track, crop, camera, win){
+  pickCtx = {visitId, track, crop, camera, win};
   const r = await fetch('/api/hitl/employees').then(r=>r.json());
   $('#empList').innerHTML = (r.employees||[]).map(e=>`<button class="empbtn" onclick="assignStaff(${e.id})">${e.code}${e.name?' · '+e.name:''}</button>`).join('')
       || '<p class="empty">No staff yet — create the first one below.</p>';
@@ -526,16 +553,17 @@ async function createStaff(){
 }
 async function assignStaff(empId){
   const c = pickCtx; closeStaff();
+  const w = c.win||WIN;
   if (c.camera){  // allocation from a raw detection -> /allocate (annotation + staff)
     await fetch('/api/hitl/allocate',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({window:WIN, camera:c.camera, track:c.track, crop:c.crop, category:'staff', employee_id:empId})}).then(r=>r.json());
+      body:JSON.stringify({window:w, camera:c.camera, track:c.track, crop:c.crop, category:'staff', employee_id:empId})}).then(r=>r.json());
     showToast(`#${c.track} → Staff #${empId}`, null);
     loadDetections(); return;
   }
   const d = await fetch('/api/hitl/label',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({window:WIN, visit_id:c.visitId, verdict:'employee', in_track:c.track, employee_id:empId, crop:c.crop})}).then(r=>r.json());
-  clearSel(); paint(d);
-  showToast(`Assigned to Staff #${empId}`, ()=>unlabelVisit(c.visitId, c.track, null));
+    body:JSON.stringify({window:w, visit_id:c.visitId, verdict:'employee', in_track:c.track, employee_id:empId, crop:c.crop})}).then(r=>r.json());
+  clearSel(); if (!DAY) paint(d);                  // clearSel() reloads; in day view that re-aggregates
+  showToast(`Assigned to Staff #${empId}`, ()=>unlabelVisit(c.visitId, c.track, null, c.win));
 }
 const ALLOC = {customer:'🛍️ customer', staff:'👤 staff', not_person:'🚫 not a person', passby:'🚶 passed by', duplicate:'🔁 duplicate'};
 async function allocate(camera, track, crop, category){
@@ -591,10 +619,11 @@ async function doLink(){
   sel={open:null,pre:null}; paint(d);
   showToast(`Linked #${a} → #${b} into one visit`, ()=>unlabelVisit(`${a}-${b}`,a,b));
 }
-async function unlabelVisit(id,inT,outT){
+async function unlabelVisit(id,inT,outT,win){
   const d = await fetch('/api/hitl/unlabel',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({window:WIN,visit_id:id,in_track:inT,out_track:outT})}).then(r=>r.json());
-  paint(d); hideToast();
+    body:JSON.stringify({window:win||WIN,visit_id:id,in_track:inT,out_track:outT})}).then(r=>r.json());
+  if (DAY) load(); else paint(d);
+  hideToast();
 }
 function paint(d){ if(d&&d.metrics){ $('#metrics').innerHTML=metricsHTML(d.metrics); } load(); }
 

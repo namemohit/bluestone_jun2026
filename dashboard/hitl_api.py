@@ -869,3 +869,9 @@ def publish(body: dict) -> dict:
 def published() -> dict:
     """Periods finalized for the client (read-only public dashboard reads these)."""
     return {"published": store.list_published()}
+
+
+@router.get("/publish-history")
+def publish_history() -> dict:
+    """Full publish history (newest first) with key numbers — the Report-tab repository."""
+    return {"history": store.published_history()}
