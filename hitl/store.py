@@ -116,7 +116,7 @@ class LocalStore:
     def record_metrics(self, window: str) -> dict:
         return self.metrics(window)
 
-    def sync(self, window: str, store_id: str = "s14") -> None:
+    def sync(self, window: str, store_id: str = "s14", with_detections: bool = True) -> None:
         return None
 
     def upload_crops(self, window: str) -> int:

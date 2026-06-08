@@ -69,7 +69,7 @@ class SupabaseStore:
 
     # ---- push a processed window up (store + window + visits + events) ---
     def push_window(self, window: str, store_id: str, visits_json: dict, *,
-                    upload_crops: bool = False) -> None:
+                    upload_crops: bool = False, with_detections: bool = True) -> None:
         start = visits_json.get("window_start_ist") or ""
         date = start.split(" ")[0] if " " in start else (start[:10] or None)
         crop = (lambda p: p)  # local path for now; Storage upload wired at deploy time
@@ -108,9 +108,10 @@ class SupabaseStore:
                          self._full_ts(date, e["ist"]), crop(e["crop"]), role))
             # detections (L1 raw, every camera) — regenerable snapshot for the detections view +
             # attendance (staff in_track -> first/last sighting). Read from the window's local L1 dirs.
-            cur.execute("delete from detections where window_id=%s", (window,))
+            if with_detections:
+                cur.execute("delete from detections where window_id=%s", (window,))
             wj = self.root / window / "window.json"
-            if wj.exists():
+            if with_detections and wj.exists():
                 wcfg = json.loads(wj.read_text(encoding="utf-8"))
                 ddirs = [(wcfg.get("l1"), "C05")] + [(d, pathlib.Path(d).name.replace("L1_", ""))
                                                      for d in wcfg.get("interior", [])]
@@ -379,11 +380,13 @@ class SupabaseStore:
                         (window, m["visits"], m["reviewed"], m["confirmed"], m["rejected"], m["precision"]))
         return m
 
-    def sync(self, window: str, store_id: str = "s14") -> None:
-        """Push the freshly re-run local visits.json into the DB (source of truth for the UI)."""
+    def sync(self, window: str, store_id: str = "s14", with_detections: bool = True) -> None:
+        """Push the freshly re-run local visits.json into the DB (source of truth for the UI).
+        with_detections=False skips the heavy L1 detections re-push (use on label re-runs)."""
         vj = self.root / window / "visits.json"
         if vj.exists():
-            self.push_window(window, store_id, json.loads(vj.read_text(encoding="utf-8")))
+            self.push_window(window, store_id, json.loads(vj.read_text(encoding="utf-8")),
+                             with_detections=with_detections)
 
     def upload_crops(self, window: str) -> int:
         """Upload this window's crop thumbnails to Supabase Storage so the cloud dashboard can

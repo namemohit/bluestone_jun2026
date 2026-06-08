@@ -92,8 +92,8 @@ def _rerun_l4(window: str) -> None:
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         raise HTTPException(500, f"L4 re-run failed: {r.stderr[-400:]}")
-    store.sync(window)            # push the re-routed result into the DB (no-op for local)
-    store.record_metrics(window)  # append a point to the precision curve
+    store.sync(window, with_detections=False)  # labels don't change L1 -> skip the ~20s detections re-push
+    store.record_metrics(window)               # append a point to the precision curve
 
 
 @router.get("/windows")
@@ -417,7 +417,7 @@ def allocate(body: dict) -> dict:
         elif category == "customer":
             store.add_label(window, f"false-{track}", "reset", in_track=track)
         _rerun_l4(window)
-    return visits(window)
+    return {"ok": True}  # the All-Detections tab reloads its own grouped data; skip the visits() rebuild
 
 
 def _enroll_from_cache(employee_id, crop, window, track):

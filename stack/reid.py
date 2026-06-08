@@ -10,9 +10,8 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
-import torch
-import torchvision.models as M
-import torchvision.transforms as T
+# torch / torchvision / boxmot are imported LAZILY (only when an actual embedding is computed) so that
+# a cached L4 re-run — which only calls the numpy osnet_sim — doesn't pay the ~6s torch import.
 
 _model = _tf = _dev = None
 
@@ -20,6 +19,9 @@ _model = _tf = _dev = None
 def _load():
     global _model, _tf, _dev
     if _model is None:
+        import torch
+        import torchvision.models as M
+        import torchvision.transforms as T
         _dev = "cuda" if torch.cuda.is_available() else "cpu"
         m = M.resnet18(weights=M.ResNet18_Weights.IMAGENET1K_V1)
         m.fc = torch.nn.Identity()  # -> 512-d feature vector
@@ -35,6 +37,7 @@ def _load():
 def embed(crop):
     if crop is None or getattr(crop, "size", 0) == 0:
         return None
+    import torch
     m, tf, dev = _load()
     rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
     x = tf(rgb).unsqueeze(0).to(dev)
@@ -56,6 +59,7 @@ _osnet = None
 def _load_osnet(weights="osnet_x1_0_msmt17.pt"):
     global _osnet
     if _osnet is None:
+        import torch
         from boxmot.reid.core.reid import ReID
         dev = "0" if torch.cuda.is_available() else "cpu"  # boxmot wants "0", not "cuda"
         _osnet = ReID(weights=weights, device=dev, half=False)

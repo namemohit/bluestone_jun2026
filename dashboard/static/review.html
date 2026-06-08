@@ -420,11 +420,10 @@ async function createStaff(){
 async function assignStaff(empId){
   const c = pickCtx; closeStaff();
   if (c.camera){  // allocation from a raw detection -> /allocate (annotation + staff)
-    const d = await fetch('/api/hitl/allocate',{method:'POST',headers:{'Content-Type':'application/json'},
+    await fetch('/api/hitl/allocate',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({window:WIN, camera:c.camera, track:c.track, crop:c.crop, category:'staff', employee_id:empId})}).then(r=>r.json());
     showToast(`#${c.track} → Staff #${empId}`, null);
-    if (DETS_LOADED) loadDetections();
-    paint(d); return;
+    loadDetections(); return;
   }
   const d = await fetch('/api/hitl/label',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({window:WIN, visit_id:c.visitId, verdict:'employee', in_track:c.track, employee_id:empId, crop:c.crop})}).then(r=>r.json());
@@ -433,11 +432,10 @@ async function assignStaff(empId){
 }
 const ALLOC = {customer:'🛍️ customer', staff:'👤 staff', not_person:'🚫 not a person', passby:'🚶 passed by', duplicate:'🔁 duplicate'};
 async function allocate(camera, track, crop, category){
-  const d = await fetch('/api/hitl/allocate',{method:'POST',headers:{'Content-Type':'application/json'},
+  await fetch('/api/hitl/allocate',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({window:WIN, camera, track, crop, category})}).then(r=>r.json());
   showToast(`#${track} → ${ALLOC[category]||category}`, null);
-  if (DETS_LOADED) loadDetections();
-  paint(d);
+  loadDetections();
 }
 async function renameStaff(empId){
   const name = (prompt('Name for Staff #'+empId+':','')||'').trim();
