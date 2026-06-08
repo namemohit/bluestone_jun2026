@@ -324,9 +324,13 @@ function renderReview(){
       const act = (RO||DAY) ? '' : (g.employee_id ? `<button onclick="renameStaff(${g.employee_id})">✎ name</button> ` : '')
                           + `<button onclick="unstaffGroup('${(g.visit_ids||[]).join('|')}')">↩ not staff</button>`;
       const imgs = (g.crops||[]).map(c=>{
-        const x = (RO||DAY)?'':`<button class="xtrack" title="not this person — back to customers" onclick="event.stopPropagation();unstaffTrack(${c.track})">✗</button>`;
-        const img = (HIDE||!c.crop)?'<div class="nocrop">👤</div>':`<img src="${cropURL(c.crop)}" onclick="event.stopPropagation();openMatches(${g.employee_id})" style="cursor:pointer" title="click to see + confirm ALL matches for this person">`;
-        return `<figure>${img}<figcaption>#${c.track} ${c.auto?'🤖':'✋'}${x}</figcaption></figure>`;
+        const pick = `openStaffPicker('open-${c.track}',${c.track},'${c.crop}',null,'${WIN}')`;   // assign a name via the door-label path -> moves into the named group
+        const name = (RO||DAY||g.employee_id)?'':`<button class="xtrack" title="assign this staffer a name" onclick="event.stopPropagation();${pick}">👤</button>`;
+        const x = (RO||DAY)?'':`<button class="xtrack" title="not staff — back to review" onclick="event.stopPropagation();unstaffTrack(${c.track})">✗</button>`;
+        const clk = g.employee_id ? `openMatches(${g.employee_id})` : pick;   // assigned -> confirm matches; unassigned -> name them
+        const ttl = g.employee_id ? 'click to see + confirm ALL matches for this person' : 'click to assign this staffer a name';
+        const img = (HIDE||!c.crop)?'<div class="nocrop">👤</div>':`<img src="${cropURL(c.crop)}" onclick="event.stopPropagation();${clk}" style="cursor:pointer" title="${ttl}">`;
+        return `<figure>${img}<figcaption>#${c.track} ${c.auto?'🤖':'✋'}${name}${x}</figcaption></figure>`;
       }).join('');
       const sub = `${g.tracks.length} sighting${g.tracks.length>1?'s':''}` + (nAuto?` · ${nAuto} auto-found 🤖`:'');
       return `<div class="ev" style="width:auto;min-width:160px;text-align:left">
@@ -721,6 +725,7 @@ async function unstaffTrack(track){
 }
 let MATCH_EMP = null;
 async function openMatches(empId){
+  if (empId==null){ showToast('Give this staffer a name first (👤), then their matches show up here', null); return; }   // guard: was rendering "S"+null = "Snull"
   MATCH_EMP = empId;
   const r = await fetch('/api/hitl/staff-matches?employee_id='+empId).then(r=>r.json());
   const en = r.enrolled_crop ? cropImg(r.enrolled_crop) : '<div class="nocrop">👤</div>';
