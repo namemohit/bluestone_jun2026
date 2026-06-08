@@ -127,6 +127,15 @@
   .prog { font-size:13px; color:var(--ink); margin:2px 0 12px; }
   .pbar { height:8px; background:#0a0d11; border-radius:5px; margin-top:6px; max-width:440px; overflow:hidden; }
   .pbar i { display:block; height:100%; background:var(--ok); transition:width .3s; }
+  .rephead { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
+  .rtitle { font-size:19px; font-weight:650; }
+  .repcards { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:10px; }
+  .repcard { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 20px; min-width:150px; color:var(--dim); font-size:13px; }
+  .repcard .big { font-size:34px; font-weight:700; color:var(--ink); line-height:1.1; }
+  .repcard .u { font-size:15px; font-weight:500; margin-left:2px; }
+  .reptable { width:100%; border-collapse:collapse; font-size:13px; max-width:680px; }
+  .reptable th { text-align:left; color:var(--dim); font-weight:600; padding:8px 10px; border-bottom:1px solid var(--line); }
+  .reptable td { padding:8px 10px; border-bottom:1px solid var(--line); }
 </style>
 </head>
 <body>
@@ -141,6 +150,7 @@
   <div class="tabs">
     <button class="tab active" onclick="showTab('review',this)">📋 Review</button>
     <button class="tab" onclick="showTab('dets',this)">🔍 All Detections</button>
+    <button class="tab" onclick="showTab('report',this)">📊 Report</button>
   </div>
   <div id="tab-review">
   <div id="linkbar" class="linkbar">
@@ -166,6 +176,7 @@
     <h2 id="detsHead">All detections — reconciliation: did we miss anyone? (L1)</h2>
     <div id="dets"><p class="hint">loading…</p></div>
   </div>
+  <div id="tab-report" style="display:none"><div id="report"></div></div>
 </main>
 <div id="toast"><b id="toastMsg"></b><button class="undo" onclick="undoLast()">↩ Undo</button><button class="x" onclick="hideToast()">✕</button></div>
 <div id="lightbox" class="lbox" onclick="closeZoom()"><div class="cap">click anywhere or press Esc to close</div><img id="lbimg"></div>
@@ -281,7 +292,30 @@ function showTab(name, btn){
   if (btn) btn.classList.add('active');
   $('#tab-review').style.display = name==='review' ? '' : 'none';
   $('#tab-dets').style.display   = name==='dets'   ? '' : 'none';
+  $('#tab-report').style.display = name==='report' ? '' : 'none';
   if (name==='dets' && !DETS_LOADED) loadDetections();
+  if (name==='report') loadReport();
+}
+async function loadReport(){
+  const date = (WIN||'').split('_')[0] || '';
+  $('#report').innerHTML = '<p class="hint">building the day report…</p>';
+  const r = await fetch('/api/hitl/report/'+date).then(r=>r.json()).catch(()=>null);
+  if (!r){ $('#report').innerHTML = '<p class="empty">could not build the report</p>'; return; }
+  const c=r.customers, g=c.groups, e=r.employees, dw=c.dwell_min||{};
+  const ts = (e.timesheets||[]).map(t=>`<tr><td>${t.employee}</td><td>${t.check_in||'—'}</td><td>${t.check_out||'—'}</td><td>${t.hours||''}</td></tr>`).join('')
+             || '<tr><td colspan="4" class="empty">no staff marked yet</td></tr>';
+  $('#report').innerHTML = `
+    <div class="rephead"><div class="rtitle">📊 Closed-day report · ${r.date}</div>
+      <button class="ok" onclick="window.print()">🖨 Close Day &amp; Export</button></div>
+    <div class="repcards">
+      <div class="repcard"><div class="big">${c.unique_customers}</div>unique customers</div>
+      <div class="repcard"><div class="big">${g.grouped}</div>arrived in groups <span class="hint">(${g.solo} solo)</span></div>
+      <div class="repcard"><div class="big">${dw.mean??'—'}<span class="u">min</span></div>avg dwell <span class="hint">(median ${dw.median??'—'})</span></div>
+      <div class="repcard"><div class="big">${e.headcount}</div>employees on duty</div>
+    </div>
+    <h2>Employee attendance</h2>
+    <table class="reptable"><thead><tr><th>Employee</th><th>Check-in</th><th>Check-out</th><th>Hours seen</th></tr></thead><tbody>${ts}</tbody></table>
+    <p class="hint" style="margin-top:16px">Customer count = human-confirmed door check-ins across ${r.windows} processed hour(s). Resolve everything in the <b>All Detections</b> tab to finalize the numbers.</p>`;
 }
 let DETS_LOADED=false, DETDATA=null, DETF={cams:{C05:1,C11:1,C14:1}, minDur:0};
 async function loadDetections(){

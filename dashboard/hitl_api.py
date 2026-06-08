@@ -480,3 +480,80 @@ def staff_matches(employee_id: int) -> dict:
     out = store.staff_matches(employee_id)
     out["code"] = _rank_labels().get(employee_id, f"S{employee_id}")
     return out
+
+
+_RESOLVED_NOT_CUSTOMER = ("staff", "not_person", "passby", "duplicate")
+
+
+def _confirmed_entries(window):
+    """(window,track,ist) for each human-confirmed customer door entry + matched-visit dwells."""
+    try:
+        data = json.loads((OUTPUTS / window / "visits.json").read_text(encoding="utf-8"))
+    except Exception:
+        return [], []
+    ann = {a["track"]: a["category"] for a in store.latest_annotations(window) if a["camera"] == "C05"}
+    auto = {}                                                  # door-IN tracks (post-rerun) -> ist
+    for v in data.get("visits", []):
+        auto[v["in_track"]] = v["in_ist"]
+    for e in data.get("open_sessions", []):
+        auto[e["track"]] = e["ist"]
+    extra = [t for t, c in ann.items() if c == "customer" and t not in auto]   # human-added missed
+    det_ist = {d["track"]: d["ist"] for d in store.get_detections(window)
+               if d.get("camera") == "C05"} if extra else {}
+    entries = [{"window": window, "track": t, "ist": ist} for t, ist in auto.items()
+               if ann.get(t) not in _RESOLVED_NOT_CUSTOMER]
+    entries += [{"window": window, "track": t, "ist": det_ist[t]} for t in extra if det_ist.get(t)]
+    dwell = [v["dwell_s"] for v in data.get("visits", [])
+             if v.get("dwell_s") and ann.get(v["in_track"]) not in _RESOLVED_NOT_CUSTOMER]
+    return entries, dwell
+
+
+def _day_report(date: str) -> dict:
+    """The B2B deliverable: human-confirmed unique customers + groups + dwell, and per-employee
+    check-in/out. Reuses logic.grouping.group_sessions + store.attendance."""
+    import glob
+    import statistics
+    from types import SimpleNamespace
+    from logic.grouping import group_sessions
+    entries, dwell = [], []
+    windows = sorted({Path(p).parent.name for p in glob.glob(f"outputs/{date}_*/visits.json")})
+    for win in windows:
+        e, d = _confirmed_entries(win)
+        entries += e
+        dwell += d
+
+    def secs(t):
+        try:
+            h, m, s = map(int, str(t).split(":"))
+            return h * 3600 + m * 60 + s
+        except Exception:
+            return 0
+    entries.sort(key=lambda e: secs(e["ist"]))
+    sess = [SimpleNamespace(is_employee=False, entry_ts=secs(e["ist"]), session_id=i)
+            for i, e in enumerate(entries)]
+    groups = group_sessions(sess, group_gap_sec=15.0)[1] if sess else []
+    att = store.attendance("s14", date)
+    rank = _rank_labels()
+    timesheets = [{"employee": rank.get(a["id"], a.get("code")) + (" · " + a["name"] if a.get("name") else ""),
+                   "check_in": a.get("first_seen"), "check_out": a.get("last_seen"),
+                   "hours": a.get("windows")} for a in att if a.get("sightings")]
+    return {
+        "date": date, "windows": len(windows),
+        "customers": {
+            "unique_customers": len(entries),
+            "groups": {"count": len(groups), "sizes": sorted((g["size"] for g in groups), reverse=True),
+                       "solo": sum(1 for g in groups if g["size"] == 1),
+                       "grouped": sum(1 for g in groups if g["size"] > 1)},
+            "dwell_min": {"mean": round(statistics.mean(dwell) / 60, 1) if dwell else None,
+                          "median": round(statistics.median(dwell) / 60, 1) if dwell else None},
+        },
+        "employees": {"headcount": len(timesheets), "timesheets": timesheets},
+    }
+
+
+@router.get("/report/{date}")
+def report(date: str) -> dict:
+    """Closed-day report for a date (YYYY-MM-DD): the shareable B2B summary."""
+    if not date or "/" in date or "\\" in date or ".." in date:
+        raise HTTPException(400, "bad date")
+    return _day_report(date)
