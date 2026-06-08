@@ -193,10 +193,104 @@ def visits(window: str) -> dict:
 
 
 @router.get("/detections/{window}")
-def detections(window: str) -> dict:
-    """L1 — every human the cameras detected (door + interior), incl. staff."""
+def detections(window: str, grouped: int = 0) -> dict:
+    """L1 — every human the cameras detected (door + interior). grouped=1 returns a RECONCILIATION
+    view: each detection tagged street / accounted / uncounted (+ a staff flag) so the wall
+    complements the Review tab instead of duplicating it."""
     _safe_window(window)
-    return {"detections": store.get_detections(window)}
+    if not grouped:
+        return {"detections": store.get_detections(window)}
+    try:
+        dets = _classify_detections(window)
+    except Exception:
+        return {"grouped": False, "detections": store.get_detections(window)}
+    buckets: dict = {"door": [], "inside": [], "accounted": [], "street": []}
+    for d in dets:
+        buckets[d["disposition"]].append(d)
+    for k in buckets:
+        buckets[k].sort(key=lambda x: x.get("ist") or "")
+    return {"grouped": True, "total": len(dets), **buckets,
+            "counts": {k: len(v) for k, v in buckets.items()}}
+
+
+def _point_in_poly(x, y, poly) -> bool:
+    inside, n, j = False, len(poly), len(poly) - 1
+    for i in range(n):
+        xi, yi = poly[i]
+        xj, yj = poly[j]
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
+def _classify_detections(window: str) -> list:
+    """Tag each L1 detection by disposition. Reads the local tracks.json (which keeps the full traj),
+    the zone config, and visits.json + labels to build the 'already accounted for' track set.
+      accounted -> entered/exited/visit/open/pre/staff (shown in the Review tab)
+      street    -> C05 track whose path is mostly inside street_mask (the noise filter dropped it)
+      uncounted -> seen but never classified  (the review focus: possible missed customer)"""
+    import re
+    wdir = OUTPUTS / window
+    wcfg = json.loads((wdir / "window.json").read_text(encoding="utf-8"))
+    cfg = json.loads(Path(wcfg["config"]).read_text(encoding="utf-8"))
+    street, sfrac = cfg.get("street_mask", []), cfg.get("street_drop_frac", 0.5)
+
+    def camtrack(crop):  # 'outputs/.../L1_C11/crops/trk_0035.jpg' -> ('C11', 35)
+        m = re.search(r"L1_([^/\\]+)[/\\]crops[/\\]trk_(\d+)", str(crop or ""))
+        return ("C05" if m.group(1) == "entry" else m.group(1), int(m.group(2))) if m else None
+
+    accounted, staff_ct = set(), set()
+    try:
+        vj = json.loads((wdir / "visits.json").read_text(encoding="utf-8"))
+    except Exception:
+        vj = {}
+    for v in vj.get("visits", []):
+        accounted.update({("C05", v["in_track"]), ("C05", v["out_track"])})
+        for c in (v.get("in_crop"), v.get("out_crop")):
+            if camtrack(c):
+                accounted.add(camtrack(c))
+    for e in vj.get("open_sessions", []) + vj.get("pre_window_exits", []):
+        accounted.add(("C05", e["track"]))
+        if camtrack(e.get("crop")):
+            accounted.add(camtrack(e.get("crop")))
+    for st in vj.get("staff", []):
+        accounted.add(("C05", st["track"]))
+        staff_ct.add(("C05", st["track"]))
+        if camtrack(st.get("crop")):
+            accounted.add(camtrack(st.get("crop")))
+            staff_ct.add(camtrack(st.get("crop")))
+    labels = store.get_labels(window)
+    not_staff = {l["in_track"] for l in labels
+                 if str(l.get("visit_id", "")).startswith("notstaff-") and l.get("verdict") == "reject"
+                 and l.get("in_track") is not None}
+    for l in labels:
+        if l.get("verdict") == "employee" and l.get("in_track") is not None and l["in_track"] not in not_staff:
+            accounted.add(("C05", l["in_track"]))
+            staff_ct.add(("C05", l["in_track"]))
+
+    dirs = [(wcfg.get("l1"), "C05")] + [(d, Path(d).name.replace("L1_", "")) for d in wcfg.get("interior", [])]
+    out = []
+    for d, cam in dirs:
+        tj = Path(d) / "tracks.json" if d else None
+        if not tj or not tj.exists():
+            continue
+        for t in json.loads(tj.read_text(encoding="utf-8")).get("tracks", []):
+            key, traj = (cam, t["track"]), t.get("traj", [])
+            if key in accounted:
+                disp = "accounted"
+            elif cam == "C05" and street and traj and \
+                    sum(_point_in_poly(x, y, street) for _, x, y, _ in traj) / len(traj) > sfrac:
+                disp = "street"
+            elif cam == "C05":
+                disp = "door"       # at the door, not counted -> possible missed entry (review focus)
+            else:
+                disp = "inside"     # interior, not matched to a visit -> who was in the store
+            out.append({"camera": cam, "track": t["track"], "ist": t.get("first_ist"),
+                        "dur_s": round(t.get("last_ts", 0) - t.get("first_ts", 0), 1),
+                        "crop": (t.get("crop", "") or "").replace("\\", "/"),
+                        "disposition": disp, "staff": key in staff_ct})
+    return out
 
 
 @router.get("/crop")
