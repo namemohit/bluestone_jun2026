@@ -277,6 +277,12 @@ def detections(window: str, grouped: int = 0) -> dict:
         dets = _classify_detections(window)
     except Exception:
         return {"grouped": False, "detections": store.get_detections(window)}
+    if any(d.get("employee_id") for d in dets):                 # resolve staff identity -> 'Staff #N · name'
+        rank, names = _rank_labels(), {e["id"]: e.get("name") for e in store.list_employees("s14")}
+        for d in dets:
+            eid = d.get("employee_id")
+            if eid:
+                d["staff_name"] = (rank.get(eid) or f"#{eid}") + (" · " + names[eid] if names.get(eid) else "")
     order = ["to_review", "customer", "staff", "passby", "not_person", "duplicate", "on_hold"]
     buckets: dict = {k: [] for k in order}
     for d in dets:
@@ -317,7 +323,7 @@ def _classify_detections(window: str) -> list:
         m = re.search(r"L1_([^/\\]+)[/\\]crops[/\\]trk_(\d+)", str(crop or ""))
         return ("C05" if m.group(1) == "entry" else m.group(1), int(m.group(2))) if m else None
 
-    accounted, staff_ct = set(), set()
+    accounted, staff_emp = set(), {}                        # staff_emp: (cam,track) -> employee_id
     try:
         vj = json.loads((wdir / "visits.json").read_text(encoding="utf-8"))
     except Exception:
@@ -333,10 +339,10 @@ def _classify_detections(window: str) -> list:
             accounted.add(camtrack(e.get("crop")))
     for st in vj.get("staff", []):
         accounted.add(("C05", st["track"]))
-        staff_ct.add(("C05", st["track"]))
+        staff_emp[("C05", st["track"])] = st.get("employee_id")
         if camtrack(st.get("crop")):
             accounted.add(camtrack(st.get("crop")))
-            staff_ct.add(camtrack(st.get("crop")))
+            staff_emp[camtrack(st.get("crop"))] = st.get("employee_id")
     labels = store.get_labels(window)
     not_staff = {l["in_track"] for l in labels
                  if str(l.get("visit_id", "")).startswith("notstaff-") and l.get("verdict") == "reject"
@@ -344,7 +350,7 @@ def _classify_detections(window: str) -> list:
     for l in labels:
         if l.get("verdict") == "employee" and l.get("in_track") is not None and l["in_track"] not in not_staff:
             accounted.add(("C05", l["in_track"]))
-            staff_ct.add(("C05", l["in_track"]))
+            staff_emp[("C05", l["in_track"])] = l.get("employee_id")
 
     ann = {(a["camera"], a["track"]): a for a in store.latest_annotations(window)}  # human allocations
     parked = _parked_set(window)                                                    # held for later review
@@ -371,20 +377,29 @@ def _classify_detections(window: str) -> list:
                 sugg, conf, det = "on_hold", False, "on_hold"
             else:
                 if disp == "accounted":
-                    sugg = "staff" if key in staff_ct else "customer"
+                    sugg = "staff" if key in staff_emp else "customer"
                 elif disp == "street":
                     sugg = "passby"
                 elif disp == "inside":
-                    sugg = "not_person" if dur < 3.0 else "to_review"   # short interior = tracker fragment
+                    # only GENUINE noise -> not_person: a brief blip (<=4 frames) that's also unconfident,
+                    # tiny, or static. Real interior people (median conf 0.80, decent size) -> to_review,
+                    # so we no longer mislabel ~90% of them as 'not a person' (the old dur<3s rule did).
+                    pconf = t.get("peak_conf", 1.0) or 1.0
+                    nfr = t.get("frames", 0) or 0
+                    maxw = max((p[3] for p in traj if len(p) >= 4), default=0.0)
+                    span = ((max((p[1] for p in traj), default=0) - min((p[1] for p in traj), default=0))
+                            + (max((p[2] for p in traj), default=0) - min((p[2] for p in traj), default=0))) if traj else 0.0
+                    noise = nfr <= 4 and (pconf < 0.55 or maxw < 0.06 or span < 0.02)
+                    sugg = "not_person" if noise else "to_review"
                 else:                                             # door -> the human must decide enter/pass
                     sugg = "to_review"
                 conf = ann_cat is not None                        # confirmed = a human annotation exists
                 det = ann_cat if conf else sugg
             out.append({"camera": cam, "track": t["track"], "ist": t.get("first_ist"), "dur_s": dur,
                         "crop": (t.get("crop", "") or "").replace("\\", "/"),
-                        "disposition": disp, "staff": key in staff_ct, "annotation": ann_cat,
+                        "disposition": disp, "staff": key in staff_emp, "annotation": ann_cat,
                         "parked": key in parked, "suggested": sugg, "confirmed": conf,
-                        "determination": det})
+                        "determination": det, "employee_id": staff_emp.get(key)})
     return out
 
 

@@ -509,10 +509,12 @@ function renderDets(){
     const frameBtn = HIDE ? '' : `<button class="framebtn" title="full source frame + path — enter or pass-by?" onclick="event.stopPropagation();showFrame('${WIN}','${d.camera}',${d.track})">📷</button>`;
     const mb = (cat,ico,ttl) => `<button title="${ttl}" class="${det===cat?'on':''}" onclick="${cat==='staff'?`openStaffPicker('det-${d.camera}-${d.track}',${d.track},'${d.crop||''}','${d.camera}')`:`allocate('${d.camera}',${d.track},'${d.crop||''}','${cat}')`}">${ico}</button>`;
     const menu = RO ? '' : `<div class="amenu">${mb('customer','🛍️','Customer')}${mb('staff','👤','Staff')}${mb('not_person','🚫','Not a person')}${mb('passby','🚶','Passed by')}${mb('duplicate','🔁','Duplicate')}<button title="${d.parked?'Release hold':'Park — review later'}" class="${d.parked?'parked':''}" onclick="park('${d.camera}',${d.track},${!d.parked})">🅿️</button></div>`;
+    const lbl = (det==='staff' && d.staff_name) ? d.staff_name : (ALLOC[det]||det);
+    const nameTag = (det==='staff' && d.staff_name) ? `<div class="dtag sugg">${d.staff_name}?</div>` : '';
     let head = '';
     if (det==='on_hold') head = `<div class="dtag hold">🅿️ on hold</div>`;
-    else if (d.confirmed) head = `<div class="adone">✓ ${ALLOC[det]||det}</div>`;
-    else if (OUTCOMES.includes(det)) head = RO ? `<div class="dtag sugg">suggested</div>` : `<button class="confirmbtn" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','${det}')">✓ confirm</button>`;
+    else if (d.confirmed) head = `<div class="adone">✓ ${lbl}</div>`;
+    else if (OUTCOMES.includes(det)) head = RO ? `<div class="dtag sugg">${(det==='staff'&&d.staff_name)?d.staff_name+'?':'suggested'}</div>` : `${nameTag}<button class="confirmbtn" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','${det}')">✓ confirm</button>`;
     return `<div class="ev dcard ${d.confirmed?'resolved':''} ${isSel?'selected':''}">${chk}${frameBtn}${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}</div>${head}${menu}</div>`;
   };
   const byB={}; DETMETA.order.forEach(k=>byB[k]=[]);
