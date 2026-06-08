@@ -41,8 +41,16 @@ def foldin(window: str, clip: str, clip_start: datetime, fps: float, store: str,
     if not wj.exists():
         print(f"[skip] {window}: no window.json"); return
     cfg = json.loads(wj.read_text(encoding="utf-8"))
-    start_str = cfg["label"].split(" IST")[0]                          # "2026-06-03 11:22:00"
-    win_start = datetime.strptime(start_str, "%Y-%m-%d %H:%M:%S")
+    start_str = cfg["label"].split(" IST")[0].strip()                  # "2026-06-03 11:22:00" or seconds-less "2026-06-03 09:00"
+    win_start = None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            win_start = datetime.strptime(start_str, fmt); break
+        except ValueError:
+            pass
+    if win_start is None:
+        print(f"[skip] {window}: unparseable label {start_str!r}"); return
+    start_str = win_start.strftime("%Y-%m-%d %H:%M:%S")               # canonical -> l1_humans --start needs seconds
     seek = (win_start - clip_start).total_seconds()
     if seek < 0:
         print(f"[skip] {window}: precedes clip start"); return
@@ -108,8 +116,15 @@ def main() -> None:
     wins = ([f"{args.date}_{w}" for w in args.windows] if args.windows
             else sorted(p.parent.name for p in Path(args.out_root).glob(f"{args.date}_*/window.json")))
     print(f"folding C14 into {len(wins)} window(s): {wins}")
-    for w in wins:
-        foldin(w, clip, clip_start, args.fps, args.store, args.out_root)
+    failed = []
+    for w in wins:                                  # isolate failures: one bad window must not abort an overnight run
+        try:
+            foldin(w, clip, clip_start, args.fps, args.store, args.out_root)
+        except Exception as e:
+            print(f"[FAIL] {w}: {e!r}", flush=True)
+            failed.append(w)
+    print(f"[done] {len(wins)-len(failed)}/{len(wins)} folded"
+          + (f"; FAILED: {failed} (re-run just these)" if failed else "; all OK"))
 
 
 if __name__ == "__main__":
