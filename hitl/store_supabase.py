@@ -197,8 +197,48 @@ class SupabaseStore:
 
     def get_gallery(self, store_id: str = "s14") -> list[dict]:
         with self._cx() as cx, cx.cursor() as cur:
-            cur.execute("select employee_id, embedding from employee_gallery where store_id=%s", (store_id,))
+            cur.execute("select employee_id, embedding, crop_url, source_window, source_track "
+                        "from employee_gallery where store_id=%s", (store_id,))
             return [dict(r) for r in cur.fetchall()]
+
+    def staff_matches(self, employee_id: int, store_id: str = "s14") -> dict:
+        """Every sighting grouped to ONE employee across the whole day, for human confirmation:
+        the enrolled crop + matches [{window, track, source('manual'|'auto'), crop, sim}] from the
+        manual labels (DB) and the auto-recognised tracks (local visits.json), minus any already
+        rejected (notstaff). Lets the reviewer see + reject every match, nothing hidden."""
+        import pathlib
+        gcrop, enrolled = {}, None
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("select crop_url, source_window, source_track from employee_gallery "
+                        "where employee_id=%s", (employee_id,))
+            for r in cur.fetchall():
+                if r["crop_url"]:
+                    enrolled = enrolled or r["crop_url"]
+                    if r["source_track"] is not None:
+                        gcrop[(r["source_window"], r["source_track"])] = r["crop_url"]
+            cur.execute("select window_id, in_track from latest_labels where employee_id=%s "
+                        "and verdict='employee' and in_track is not null", (employee_id,))
+            manual = [(r["window_id"], r["in_track"]) for r in cur.fetchall()]
+            cur.execute("select window_id, in_track from latest_labels where verdict='reject' "
+                        "and visit_id like 'notstaff-%%' and in_track is not null")
+            notstaff = {(r["window_id"], r["in_track"]) for r in cur.fetchall()}
+        matches = []
+        for win, tr in manual:
+            if (win, tr) not in notstaff:
+                matches.append({"window": win, "track": tr, "source": "manual",
+                                "crop": gcrop.get((win, tr)) or enrolled, "sim": None})
+        for vj in sorted(pathlib.Path(self.root).glob("*/visits.json")):
+            win = vj.parent.name
+            try:
+                staff = json.loads(vj.read_text(encoding="utf-8")).get("staff", [])
+            except Exception:
+                continue
+            for st in staff:
+                if st.get("employee_id") == employee_id and (win, st.get("track")) not in notstaff:
+                    matches.append({"window": win, "track": st["track"], "source": "auto",
+                                    "crop": st.get("crop"), "sim": st.get("sim")})
+        matches.sort(key=lambda m: (m["window"], m["track"]))
+        return {"enrolled_crop": enrolled, "matches": matches}
 
     def attendance(self, store_id: str = "s14", date: str | None = None) -> list[dict]:
         """Per employee, across the day: first/last sighting, #sightings, #windows, and an hourly

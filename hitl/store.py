@@ -135,5 +135,8 @@ class LocalStore:
     def get_gallery(self, store_id: str = "s14") -> list[dict]:
         return []
 
+    def staff_matches(self, employee_id: int, store_id: str = "s14") -> dict:
+        return {"enrolled_crop": None, "matches": []}
+
     def attendance(self, store_id: str = "s14", date=None) -> list[dict]:
         return []

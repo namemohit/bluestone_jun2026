@@ -101,6 +101,12 @@
   .tlrow { display:flex; align-items:center; gap:9px; margin:5px 0; font-size:12px; color:var(--dim); }
   .tlrow img { height:48px; width:auto; max-width:46px; border-radius:5px; border:1px solid var(--line); }
   .tlrow .nocrop { height:48px; width:36px; font-size:18px; }
+  .mhead { display:flex; gap:16px; align-items:center; margin-bottom:14px; padding-bottom:12px; border-bottom:1px solid var(--line); }
+  .mhead img { height:96px; width:auto; border-radius:8px; border:2px solid var(--accent); }
+  .mgrid { display:flex; flex-wrap:wrap; gap:10px; max-height:58vh; overflow:auto; }
+  .mcell { background:#0f141b; border:1px solid var(--line); border-radius:9px; padding:7px; text-align:center; width:122px; }
+  .mcell img { height:120px; width:auto; max-width:108px; border-radius:6px; }
+  .mcell .lb { font-size:11px; color:var(--dim); margin:5px 0; }
 </style>
 </head>
 <body>
@@ -143,6 +149,13 @@
     <button onclick="closeStaff()">Cancel</button>
   </div>
 </div></div>
+<div id="matchModal" class="modal"><div class="modalbox" style="max-width:720px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <h3 style="margin:0">Confirm matches — is every face the same person?</h3>
+    <button onclick="closeMatches()">✕ close</button>
+  </div>
+  <div id="matchBody"></div>
+</div></div>
 <script>
 const $ = s => document.querySelector(s);
 const cropURL = p => `/api/hitl/crop?path=${encodeURIComponent(p)}`;
@@ -152,7 +165,7 @@ const cropImg = p => HIDE ? '<div class="nocrop" title="face hidden on this view
 
 function zoom(p){ if(HIDE||!p) return; $('#lbimg').src = cropURL(p); $('#lightbox').classList.add('show'); }
 function closeZoom(){ $('#lightbox').classList.remove('show'); }
-document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeZoom(); closeStaff(); } });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeZoom(); closeStaff(); closeMatches(); } });
 
 async function loadWindows() {
   const r = await fetch('/api/hitl/windows').then(r=>r.json());
@@ -220,7 +233,8 @@ async function load(){
                           + `<button onclick="unstaffGroup('${(g.visit_ids||[]).join('|')}')">↩ not staff</button>`;
       const imgs = (g.crops||[]).map(c=>{
         const x = RO?'':`<button class="xtrack" title="not this person — back to customers" onclick="event.stopPropagation();unstaffTrack(${c.track})">✗</button>`;
-        return `<figure>${c.crop?cropImg(c.crop):'<div class="nocrop">👤</div>'}<figcaption>#${c.track} ${c.auto?'🤖':'✋'}${x}</figcaption></figure>`;
+        const img = (HIDE||!c.crop)?'<div class="nocrop">👤</div>':`<img src="${cropURL(c.crop)}" onclick="event.stopPropagation();openMatches(${g.employee_id})" style="cursor:pointer" title="click to see + confirm ALL matches for this person">`;
+        return `<figure>${img}<figcaption>#${c.track} ${c.auto?'🤖':'✋'}${x}</figcaption></figure>`;
       }).join('');
       const sub = `${g.tracks.length} sighting${g.tracks.length>1?'s':''}` + (nAuto?` · ${nAuto} auto-found 🤖`:'');
       return `<div class="ev" style="width:auto;min-width:160px;text-align:left">
@@ -320,6 +334,31 @@ async function unstaffTrack(track){
             body:JSON.stringify({window:WIN, track})}).then(r=>r.json());
   showToast('#'+track+' set back to customer', ()=>unlabelVisit('notstaff-'+track, track, null));
   paint(d);
+}
+let MATCH_EMP = null;
+async function openMatches(empId){
+  MATCH_EMP = empId;
+  const r = await fetch('/api/hitl/staff-matches?employee_id='+empId).then(r=>r.json());
+  const en = r.enrolled_crop ? cropImg(r.enrolled_crop) : '<div class="nocrop">👤</div>';
+  const cells = (r.matches||[]).map(m=>{
+    const hr = (String(m.window).split('_')[1]||'').replace(/(\d\d)(\d\d)/,'$1:$2');
+    const tag = m.source==='auto' ? ('🤖 auto'+(m.sim?' · '+Math.round(m.sim*100)+'%':'')) : '✋ you marked';
+    const x = RO?'':`<button class="xtrack" onclick="unstaffMatch('${m.window}',${m.track})">✗ not them</button>`;
+    return `<div class="mcell">${m.crop?cropImg(m.crop):'<div class="nocrop">👤</div>'}<div class="lb"><b>${hr}</b> · #${m.track}<br>${tag}</div>${x}</div>`;
+  }).join('') || '<p class="empty">no matches found yet</p>';
+  $('#matchBody').innerHTML = `<div class="mhead"><figure style="margin:0;text-align:center"><div class="hint">you tagged</div>${en}</figure>
+    <div><b>${r.code||('S'+empId)}</b> · ${(r.matches||[]).length} sighting(s) across the day<br>
+    <span class="hint">reject any face below that isn't this person</span></div></div>
+    <div class="mgrid">${cells}</div>`;
+  $('#matchModal').classList.add('show');
+}
+function closeMatches(){ $('#matchModal').classList.remove('show'); }
+async function unstaffMatch(window, track){
+  await fetch('/api/hitl/unstaff-track',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({window, track})}).then(r=>r.json());
+  showToast('#'+track+' ('+(window.split('_')[1]||'')+') set back to customer', null);
+  if (MATCH_EMP!=null) await openMatches(MATCH_EMP);
+  load();
 }
 async function doLink(){
   const a=sel.open.track, b=sel.pre.track;

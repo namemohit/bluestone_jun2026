@@ -163,6 +163,14 @@ def visits(window: str) -> dict:
     for a in auto:
         if a.get("crop"):
             track_crop[a["track"]] = a["crop"]
+    # the enrolled crop (the image the human actually CLICKED) is the truest for a manual mark — it
+    # beats the door crop, which can show the wrong person when the door<->interior bridge mismatched
+    try:
+        for ge in store.get_gallery():
+            if ge.get("source_window") == window and ge.get("source_track") is not None and ge.get("crop_url"):
+                track_crop[ge["source_track"]] = ge["crop_url"]
+    except Exception:
+        pass
     # fallback for manually-marked tracks that got filtered out of visits/open: the door (C05) crop
     missing = {t for g in groups.values() for t in g["tracks"] if t not in track_crop}
     if missing:
@@ -320,3 +328,11 @@ def attendance(store_id: str = "s14", date: str | None = None) -> dict:
     for r in rows:
         r["code"] = lab.get(r["id"], r.get("code"))
     return {"attendance": rows}
+
+
+@router.get("/staff-matches")
+def staff_matches(employee_id: int) -> dict:
+    """Every sighting grouped to one staffer across the day (manual + auto) for human confirmation."""
+    out = store.staff_matches(employee_id)
+    out["code"] = _rank_labels().get(employee_id, f"S{employee_id}")
+    return out
