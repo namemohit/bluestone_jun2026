@@ -155,7 +155,21 @@ class SupabaseStore:
         with self._cx() as cx, cx.cursor() as cur:
             cur.execute("select id from windows order by id")
             ids = [r["id"] for r in cur.fetchall()]
-        return [{"window": w, **self.metrics(w)} for w in ids]
+        # metrics for EVERY window in 2 batched round-trips, not 2 per window (this endpoint loads on
+        # every page refresh — the per-window loop was ~2N Supabase calls = seconds of dropdown lag).
+        vmap = self.get_visits_many(ids)
+        lmap = self.get_labels_many(ids)
+        out = []
+        for w in ids:
+            visits = vmap.get(w, {}).get("visits", [])
+            labels = {l["visit_id"]: l["verdict"] for l in lmap.get(w, []) if l["verdict"] != "reset"}
+            reviewed = [v for v in visits if v["id"] in labels]
+            confirmed = sum(1 for v in reviewed if labels[v["id"]] in ("confirm", "employee"))
+            out.append({"window": w, "visits": len(visits), "reviewed": len(reviewed), "confirmed": confirmed,
+                        "rejected": len(reviewed) - confirmed,
+                        "precision": round(confirmed / len(reviewed), 3) if reviewed else None,
+                        "unreviewed": len(visits) - len(reviewed)})
+        return out
 
     def get_labels(self, window: str) -> list[dict]:
         with self._cx() as cx, cx.cursor() as cur:
