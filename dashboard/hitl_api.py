@@ -277,12 +277,23 @@ def detections(window: str, grouped: int = 0) -> dict:
         dets = _classify_detections(window)
     except Exception:
         return {"grouped": False, "detections": store.get_detections(window)}
-    if any(d.get("employee_id") for d in dets):                 # resolve staff identity -> 'Staff #N · name'
+    return _grouped_detections(dets)
+
+
+def _resolve_staff_names(dets: list) -> None:
+    """Attach 'Staff #N · name' to each staff detection (day-global rank, so names match across hours)."""
+    if any(d.get("employee_id") for d in dets):
         rank, names = _rank_labels(), {e["id"]: e.get("name") for e in store.list_employees("s14")}
         for d in dets:
             eid = d.get("employee_id")
             if eid:
                 d["staff_name"] = (rank.get(eid) or f"#{eid}") + (" · " + names[eid] if names.get(eid) else "")
+
+
+def _grouped_detections(dets: list) -> dict:
+    """Bucket a (possibly multi-window) detection list into the reconciliation response shape.
+    Shared by the per-hour /detections and the whole-day /detections-day endpoints."""
+    _resolve_staff_names(dets)
     # display order (user-chosen): accounted people first, then already-counted, noise, then the work queue last.
     # 'inside' sits next to 'duplicate' — both mean "already counted at the door" (confirming inside writes duplicate).
     order = ["customer", "staff", "on_hold", "duplicate", "inside", "not_person", "passby", "to_review"]
@@ -290,7 +301,7 @@ def detections(window: str, grouped: int = 0) -> dict:
     for d in dets:
         buckets.setdefault(d.get("determination", "to_review"), []).append(d)
     for k in buckets:
-        buckets[k].sort(key=lambda x: x.get("ist") or "")
+        buckets[k].sort(key=lambda x: x.get("ist") or "")    # interleave hours chronologically within a bucket
     per_bucket = {k: {"confirmed": sum(1 for d in buckets.get(k, []) if d.get("confirmed")),
                       "total": len(buckets.get(k, []))} for k in order}
     return {"grouped": True, "total": len(dets), "order": order, "buckets": buckets,
@@ -298,6 +309,23 @@ def detections(window: str, grouped: int = 0) -> dict:
             # 'inside' = auto-handled (already counted at the door) -> excluded from the close-the-day denominator
             "close_total": sum(1 for d in dets if d.get("determination") != "inside"),
             "counts": {k: len(buckets.get(k, [])) for k in order}}
+
+
+@router.get("/detections-day/{date}")
+def detections_day(date: str) -> dict:
+    """Whole-day reconciliation: every detection across the date's hourly windows, bucketed.
+    Mirrors visits_day; each detection already carries its 'window' (set in _classify_detections)."""
+    if not date or "/" in date or "\\" in date or ".." in date:
+        raise HTTPException(400, "bad date")
+    import glob
+    windows = sorted({Path(p).parent.name for p in glob.glob(f"outputs/{date}_*/visits.json")})
+    all_dets: list = []
+    for win in windows:
+        try:
+            all_dets += _classify_detections(win, with_dims=False)   # skip crop-header reads -> fast day load (size filter is a per-hour tool)
+        except Exception:
+            continue
+    return _grouped_detections(all_dets)
 
 
 def _point_in_poly(x, y, poly) -> bool:
@@ -334,7 +362,7 @@ def _crop_dims(crop: str):
     return _CROP_DIM[crop]
 
 
-def _classify_detections(window: str) -> list:
+def _classify_detections(window: str, with_dims: bool = True) -> list:
     """Tag each L1 detection by disposition. Reads the local tracks.json (which keeps the full traj),
     the zone config, and visits.json + labels to build the 'already accounted for' track set.
       accounted -> entered/exited/visit/open/pre/staff (shown in the Review tab)
@@ -426,8 +454,8 @@ def _classify_detections(window: str) -> list:
                 conf = ann_cat is not None                        # confirmed = a human annotation exists
                 det = ann_cat if conf else sugg
             cropr = (t.get("crop", "") or "").replace("\\", "/")
-            cw, ch = _crop_dims(cropr)
-            out.append({"camera": cam, "track": t["track"], "ist": t.get("first_ist"), "dur_s": dur,
+            cw, ch = _crop_dims(cropr) if with_dims else (None, None)   # day view skips per-crop header reads
+            out.append({"camera": cam, "track": t["track"], "window": window, "ist": t.get("first_ist"), "dur_s": dur,
                         "crop": cropr, "crop_w": cw, "crop_h": ch,
                         "disposition": disp, "staff": key in staff_emp, "annotation": ann_cat,
                         "parked": key in parked, "suggested": sugg, "confirmed": conf,

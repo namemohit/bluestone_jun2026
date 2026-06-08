@@ -485,11 +485,12 @@ let DETS_LOADED=false, DETALL=null, DETMETA=null, DIRTY_WINS=new Set(), DETF=LS.
 let DOPEN=new Set();   // which buckets are expanded; in-memory only -> every refresh starts all-folded, and a re-render (e.g. ticking a crop) keeps your current view instead of snapping back to To-review
 async function loadDetections(){
   DETS_LOADED = true;
-  if (DAY){ $('#dets').innerHTML = '<p class="hint">All-Detections is per-hour — pick a specific hour in the dropdown to resolve detections.</p>'; return; }
   $('#dets').innerHTML = '<p class="hint">loading…</p>';
-  const r = await fetch('/api/hitl/detections/'+encodeURIComponent(WIN)+'?grouped=1').then(r=>r.json()).catch(()=>({grouped:false,detections:[]}));
+  const url = DAY ? '/api/hitl/detections-day/'+encodeURIComponent(WIN)            // whole-day reconciliation across hours
+                  : '/api/hitl/detections/'+encodeURIComponent(WIN)+'?grouped=1';
+  const r = await fetch(url).then(r=>r.json()).catch(()=>({grouped:false,detections:[]}));
   if (!r.grouped){ $('#dets').innerHTML = (r.detections||[]).map(detHTML).join('')||'<p class="empty">none</p>'; return; }
-  DETALL = []; (r.order||[]).forEach(k=>(r.buckets[k]||[]).forEach(d=>DETALL.push(d)));   // flat cache = the reconciliation point
+  DETALL = []; (r.order||[]).forEach(k=>(r.buckets[k]||[]).forEach(d=>DETALL.push(d)));   // flat cache; each detection carries its source window
   DETMETA = {order:r.order, total:r.total};
   renderDets();
 }
@@ -498,7 +499,13 @@ function toggleCam(c){ DETF.cams[c]=DETF.cams[c]?0:1; LS.set('detf',DETF); rende
 function setMinDur(v){ DETF.minDur=parseFloat(v)||0; LS.set('detf',DETF); renderDets(); }
 function setMinW(v){ DETF.minW=parseInt(v)||0; LS.set('detf',DETF); renderDets(); }     // min crop WIDTH px (horizontal), acts on its own
 function setMinH(v){ DETF.minH=parseInt(v)||0; LS.set('detf',DETF); renderDets(); }     // min crop HEIGHT px (vertical), acts on its own
-function toggleGrp(k, head){ DOPEN.has(k) ? DOPEN.delete(k) : DOPEN.add(k); head.closest('.dgrp').classList.toggle('open'); }
+function toggleGrp(k, head){   // lazy-render: build this bucket's cards on expand, clear on collapse
+  const opening = !DOPEN.has(k);
+  opening ? DOPEN.add(k) : DOPEN.delete(k);
+  const g = head.closest('.dgrp'); g.classList.toggle('open', opening);
+  const mini = g.querySelector('.mini');
+  if (mini) mini.innerHTML = opening ? buildBucketCards(k) : '';
+}
 function setTimeF(which,v){ DETF[which]=v||''; LS.set('detf',DETF); renderReview(); renderDets(); }   // one slice -> both halves
 function clearTimeF(){ DETF.from=DETF.to=''; LS.set('detf',DETF); renderReview(); renderDets(); }
 const BUCKET = {
@@ -512,39 +519,41 @@ const BUCKET = {
   on_hold:  {icon:'🅿️',title:'On hold',note:'held for later — decide when ready'},
 };
 const OUTCOMES = ['customer','staff','passby','not_person','duplicate'];
+function detKeep(d){ return DETF.cams[d.camera] && (d.dur_s||0)>=DETF.minDur
+    && (!DETF.minW || !d.crop_w || d.crop_w>=DETF.minW) && (!DETF.minH || !d.crop_h || d.crop_h>=DETF.minH) && inTimeRange(d.ist); }   // unknown dims -> don't hide
+function detCard(d){
+  const k = d.window+'|'+d.camera+'|'+d.track, isSel = SEL.has(k), det = d.determination;   // window-qualified: track ids repeat across hours
+  const chk = RO ? '' : `<input type="checkbox" class="dsel" ${isSel?'checked':''} title="select for bulk" onclick="event.stopPropagation();toggleSel('${d.window}','${d.camera}',${d.track},'${d.crop||''}')">`;
+  const frameBtn = HIDE ? '' : `<button class="framebtn" title="full source frame + path — enter or pass-by?" onclick="event.stopPropagation();showFrame('${d.window}','${d.camera}',${d.track})">📷</button>`;
+  const mb = (cat,ico,ttl) => `<button title="${ttl}" class="${det===cat?'on':''}" onclick="${cat==='staff'?`openStaffPicker('det-${d.camera}-${d.track}',${d.track},'${d.crop||''}','${d.camera}','${d.window}')`:`allocate('${d.window}','${d.camera}',${d.track},'${d.crop||''}','${cat}')`}">${ico}</button>`;
+  const menu = RO ? '' : `<div class="amenu">${mb('customer','🛍️','Customer')}${mb('staff','👤','Staff')}${mb('not_person','🚫','Not a person')}${mb('passby','🚶','Passed by')}${mb('duplicate','🔁','Duplicate')}<button title="${d.parked?'Release hold':'Park — review later'}" class="${d.parked?'parked':''}" onclick="park('${d.window}','${d.camera}',${d.track},${!d.parked})">🅿️</button></div>`;
+  const lbl = (det==='staff' && d.staff_name) ? d.staff_name : (ALLOC[det]||det);
+  const nameTag = (det==='staff' && d.staff_name) ? `<div class="dtag sugg">${d.staff_name}?</div>` : '';
+  let head = '';
+  if (det==='on_hold') head = `<div class="dtag hold">🅿️ on hold</div>`;
+  else if (d.confirmed) head = `<div class="adone">✓ ${lbl}</div>`;
+  else if (OUTCOMES.includes(det)) head = RO ? `<div class="dtag sugg">${(det==='staff'&&d.staff_name)?d.staff_name+'?':'suggested'}</div>` : `${nameTag}<button class="confirmbtn" onclick="allocate('${d.window}','${d.camera}',${d.track},'${d.crop||''}','${det}')">✓ confirm</button>`;
+  else if (det==='inside') head = RO ? `<div class="dtag sugg">already inside</div>` : `<button class="confirmbtn" title="already counted at the door" onclick="allocate('${d.window}','${d.camera}',${d.track},'${d.crop||''}','duplicate')">✓ already counted</button>`;
+  const winb = (DAY && d.window) ? `<span class="winbadge">${(d.window.split('_')[1]||'').replace(/(\d\d)(\d\d)/,'$1:$2')}</span>` : '';   // which hour, in day view
+  return `<div class="ev dcard ${d.confirmed?'resolved':''} ${isSel?'selected':''}">${chk}${frameBtn}${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''} ${winb}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}</div>${head}${menu}</div>`;
+}
+function bucketArr(k){ return (DETALL||[]).filter(d=>d.determination===k && detKeep(d)).sort((a,b)=>(a.ist||'').localeCompare(b.ist||'')); }
+function buildBucketCards(k){ return bucketArr(k).map(detCard).join('')||'<p class="empty">none</p>'; }
 function renderDets(){
   if(!DETALL || !DETMETA) return;
-  const keep = a => (a||[]).filter(d=>DETF.cams[d.camera] && (d.dur_s||0)>=DETF.minDur
-      && (!DETF.minW || (d.crop_w||0)>=DETF.minW) && (!DETF.minH || (d.crop_h||0)>=DETF.minH) && inTimeRange(d.ist));
-  const card = d => {
-    const k = d.camera+'|'+d.track, isSel = SEL.has(k), det = d.determination;
-    const chk = RO ? '' : `<input type="checkbox" class="dsel" ${isSel?'checked':''} title="select for bulk" onclick="event.stopPropagation();toggleSel('${d.camera}',${d.track},'${d.crop||''}')">`;
-    const frameBtn = HIDE ? '' : `<button class="framebtn" title="full source frame + path — enter or pass-by?" onclick="event.stopPropagation();showFrame('${WIN}','${d.camera}',${d.track})">📷</button>`;
-    const mb = (cat,ico,ttl) => `<button title="${ttl}" class="${det===cat?'on':''}" onclick="${cat==='staff'?`openStaffPicker('det-${d.camera}-${d.track}',${d.track},'${d.crop||''}','${d.camera}')`:`allocate('${d.camera}',${d.track},'${d.crop||''}','${cat}')`}">${ico}</button>`;
-    const menu = RO ? '' : `<div class="amenu">${mb('customer','🛍️','Customer')}${mb('staff','👤','Staff')}${mb('not_person','🚫','Not a person')}${mb('passby','🚶','Passed by')}${mb('duplicate','🔁','Duplicate')}<button title="${d.parked?'Release hold':'Park — review later'}" class="${d.parked?'parked':''}" onclick="park('${d.camera}',${d.track},${!d.parked})">🅿️</button></div>`;
-    const lbl = (det==='staff' && d.staff_name) ? d.staff_name : (ALLOC[det]||det);
-    const nameTag = (det==='staff' && d.staff_name) ? `<div class="dtag sugg">${d.staff_name}?</div>` : '';
-    let head = '';
-    if (det==='on_hold') head = `<div class="dtag hold">🅿️ on hold</div>`;
-    else if (d.confirmed) head = `<div class="adone">✓ ${lbl}</div>`;
-    else if (OUTCOMES.includes(det)) head = RO ? `<div class="dtag sugg">${(det==='staff'&&d.staff_name)?d.staff_name+'?':'suggested'}</div>` : `${nameTag}<button class="confirmbtn" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','${det}')">✓ confirm</button>`;
-    else if (det==='inside') head = RO ? `<div class="dtag sugg">already inside</div>` : `<button class="confirmbtn" title="already counted at the door" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','duplicate')">✓ already counted</button>`;
-    return `<div class="ev dcard ${d.confirmed?'resolved':''} ${isSel?'selected':''}">${chk}${frameBtn}${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}</div>${head}${menu}</div>`;
-  };
-  const byB={}; DETMETA.order.forEach(k=>byB[k]=[]);
-  DETALL.forEach(d=>(byB[d.determination]||(byB[d.determination]=[])).push(d));   // reflects optimistic edits
-  let shown=0; const kept={};
-  DETMETA.order.forEach(k=>{ kept[k]=keep(byB[k]||[]).sort((a,b)=>(a.ist||'').localeCompare(b.ist||'')); shown+=kept[k].length; });
+  const kept={}; let shown=0;
+  DETMETA.order.forEach(k=>{ kept[k]=bucketArr(k); shown+=kept[k].length; });   // counts are cheap; cards render lazily per open bucket
   const grpB = (k) => {
     const m=BUCKET[k]||{icon:'',title:k,note:''}, arr=kept[k]||[], conf=arr.filter(d=>d.confirmed).length;
     const unconf=arr.filter(d=>!d.confirmed && !d.parked).length;
     const confAll = (!RO && (OUTCOMES.includes(k)||k==='inside') && unconf) ? `<button class="confallbtn" onclick="event.stopPropagation();confirmAllShown('${k}','${k==='inside'?'duplicate':k}')">✓ ${k==='inside'?'all already counted':'confirm all shown'} (${unconf})</button>` : '';
-    return `<div class="dgrp ${DOPEN.has(k)?'open':''}"><div class="ddhead" onclick="toggleGrp('${k}',this)"><b>${m.icon} ${m.title} · ${conf}/${arr.length}</b> <span class="hint">${m.note}</span> ${confAll}</div><div class="dbody"><div class="mini">${arr.map(card).join('')||'<p class="empty">none</p>'}</div></div></div>`;
+    const body = DOPEN.has(k) ? (arr.map(detCard).join('')||'<p class="empty">none</p>') : '';   // lazy-render: closed buckets fire no image loads (a whole day is ~12k crops)
+    return `<div class="dgrp ${DOPEN.has(k)?'open':''}"><div class="ddhead" onclick="toggleGrp('${k}',this)"><b>${m.icon} ${m.title} · ${conf}/${arr.length}</b> <span class="hint">${m.note}</span> ${confAll}</div><div class="dbody"><div class="mini">${body}</div></div></div>`;
   };
-  const denom = DETALL.filter(d=>d.determination!=='inside').length;   // Inside = auto-handled, off the critical path
-  const totalConf = DETALL.filter(d=>d.confirmed).length;
+  const denom = (DETALL||[]).filter(d=>d.determination!=='inside').length;   // Inside = auto-handled, off the critical path
+  const totalConf = (DETALL||[]).filter(d=>d.confirmed).length;
   const prog = denom ? Math.round(100*totalConf/denom) : 0;
-  const stale = DIRTY_WINS.has(WIN) ? ` · <span class="stalehint">⚠ count may be stale — <button onclick="recompute()">↻ recompute</button></span>` : '';
+  const stale = DIRTY_WINS.size ? ` · <span class="stalehint">⚠ count may be stale — <button onclick="recompute()">↻ recompute</button></span>` : '';
   const bulkbar = SEL.size ? `<div class="bulkbar"><b>${SEL.size} selected</b> → set all to:
        <button onclick="bulkAllocate('customer')">🛍️ Customer</button>
        <button onclick="bulkStaff()">👤 Staff</button>
@@ -643,10 +652,10 @@ async function assignStaff(empId){
   if (c.bulkStaff){ bulkAllocate('staff', empId); return; }   // bulk: every selected crop -> this staffer
   const w = c.win||WIN;
   if (c.camera){  // allocation from a raw detection -> /allocate (annotation + staff)
-    applyDetLocal(c.camera, c.track, 'staff'); renderDets();   // INSTANT
+    applyDetLocal(w, c.camera, c.track, 'staff'); renderDets();   // INSTANT
     showToast(`#${c.track} → Staff #${empId}`, null);
     markStale(await fetch('/api/hitl/allocate',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({window:w, camera:c.camera, track:c.track, crop:c.crop, category:'staff', employee_id:empId})}).then(r=>r.json()).catch(()=>null));
+      body:JSON.stringify({window:w, camera:c.camera, track:c.track, crop:c.crop, category:'staff', employee_id:empId})}).then(r=>r.json()).catch(()=>null), w);
     return;
   }
   const d = await fetch('/api/hitl/label',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -656,59 +665,64 @@ async function assignStaff(empId){
 }
 const ALLOC = {customer:'🛍️ customer', staff:'👤 staff', not_person:'🚫 not a person', passby:'🚶 passed by', duplicate:'🔁 duplicate'};
 function refreshAll(){ DETS_WIN = null; load(); }   // results + detections share one tab now -> refresh both
-let SEL = new Map();   // 'camera|track' -> {camera, track, crop}, the multi-selected detections
-function toggleSel(camera, track, crop){
-  const k = camera+'|'+track;
-  if (SEL.has(k)) SEL.delete(k); else SEL.set(k, {camera, track, crop});
+let SEL = new Map();   // 'window|camera|track' -> {window, camera, track, crop}, the multi-selected detections
+function toggleSel(window, camera, track, crop){
+  const k = window+'|'+camera+'|'+track;
+  if (SEL.has(k)) SEL.delete(k); else SEL.set(k, {window, camera, track, crop});
   renderDets();
 }
 function clearSelDets(){ SEL.clear(); renderDets(); }
-function applyDetLocal(camera, track, category){   // optimistic: move the card + confirm, no refetch
-  const d = DETALL && DETALL.find(x=>x.camera===camera && x.track===track);
+function applyDetLocal(window, camera, track, category){   // optimistic: move the card + confirm, no refetch
+  const d = DETALL && DETALL.find(x=>x.window===window && x.camera===camera && x.track===track);
   if (d){ d.determination=category; d.confirmed=true; d.annotation=category; d.parked=false; }
 }
-function applyParkLocal(camera, track, on){
-  const d = DETALL && DETALL.find(x=>x.camera===camera && x.track===track);
+function applyParkLocal(window, camera, track, on){
+  const d = DETALL && DETALL.find(x=>x.window===window && x.camera===camera && x.track===track);
   if (!d) return;
   if (on){ d._prepark=d.determination; d.determination='on_hold'; d.parked=true; }
   else { d.determination = d._prepark || (d.confirmed?d.annotation:d.suggested) || 'to_review'; d.parked=false; }
 }
-function markStale(r){ if (r && r.stale){ DIRTY_WINS.add(WIN); renderDets(); } }   // a C05 mark -> count needs recompute
-async function allocate(camera, track, crop, category){
-  applyDetLocal(camera, track, category); renderDets();   // INSTANT — bucket move is annotation-driven, no L4 wait
+function markStale(r, window){ if (r && r.stale){ DIRTY_WINS.add(window||WIN); renderDets(); } }   // a C05 mark -> THAT window's count needs recompute
+async function allocate(window, camera, track, crop, category){
+  applyDetLocal(window, camera, track, category); renderDets();   // INSTANT — bucket move is annotation-driven, no L4 wait
   markStale(await fetch('/api/hitl/allocate',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({window:WIN, camera, track, crop, category})}).then(r=>r.json()).catch(()=>null));
+    body:JSON.stringify({window, camera, track, crop, category})}).then(r=>r.json()).catch(()=>null), window);
 }
 async function bulkAllocate(category, empId){
   const items = [...SEL.values()];
   if (!items.length) return;
-  items.forEach(s=>applyDetLocal(s.camera, s.track, category)); SEL.clear(); renderDets();   // INSTANT
+  items.forEach(s=>applyDetLocal(s.window, s.camera, s.track, category)); SEL.clear(); renderDets();   // INSTANT
   showToast(`${items.length} crops → ${ALLOC[category]||category}`, null);
-  const body = {window:WIN, category, items}; if (empId) body.employee_id = empId;
-  markStale(await fetch('/api/hitl/allocate-bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).catch(()=>null));
+  const byWin = {}; items.forEach(s=>(byWin[s.window]||(byWin[s.window]=[])).push(s));   // items can span hours -> one POST per window
+  for (const [win, group] of Object.entries(byWin)){
+    const body = {window:win, category, items:group}; if (empId) body.employee_id = empId;
+    markStale(await fetch('/api/hitl/allocate-bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).catch(()=>null), win);
+  }
 }
 async function confirmAllShown(key, writeCat){   // confirm every visible unconfirmed card in a bucket; writeCat lets Inside write 'duplicate'
   writeCat = writeCat || key;
   if (!DETALL) return;
-  const keepF = d => DETF.cams[d.camera] && (d.dur_s||0)>=DETF.minDur
-      && (!DETF.minW || (d.crop_w||0)>=DETF.minW) && (!DETF.minH || (d.crop_h||0)>=DETF.minH) && inTimeRange(d.ist);
-  const vis = DETALL.filter(d=>d.determination===key && !d.confirmed && !d.parked && keepF(d));
+  const vis = DETALL.filter(d=>d.determination===key && !d.confirmed && !d.parked && detKeep(d));
   if (!vis.length) return;
-  const items = vis.map(d=>({camera:d.camera, track:d.track, crop:d.crop}));
-  items.forEach(s=>applyDetLocal(s.camera, s.track, writeCat)); renderDets();   // INSTANT (Inside -> Duplicate)
+  const items = vis.map(d=>({window:d.window, camera:d.camera, track:d.track, crop:d.crop}));
+  items.forEach(s=>applyDetLocal(s.window, s.camera, s.track, writeCat)); renderDets();   // INSTANT (Inside -> Duplicate)
   showToast(`confirmed ${items.length} → ${ALLOC[writeCat]||writeCat}`, null);
-  markStale(await fetch('/api/hitl/allocate-bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({window:WIN, category:writeCat, items})}).then(r=>r.json()).catch(()=>null));
+  const byWin = {}; items.forEach(s=>(byWin[s.window]||(byWin[s.window]=[])).push(s));   // span hours -> one POST per window
+  for (const [win, group] of Object.entries(byWin))
+    markStale(await fetch('/api/hitl/allocate-bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({window:win, category:writeCat, items:group})}).then(r=>r.json()).catch(()=>null), win);
 }
-async function park(camera, track, on){
-  applyParkLocal(camera, track, on); renderDets();   // INSTANT
-  fetch('/api/hitl/park',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({window:WIN, on, items:[{camera, track}]})}).catch(()=>{});
+async function park(window, camera, track, on){
+  applyParkLocal(window, camera, track, on); renderDets();   // INSTANT
+  fetch('/api/hitl/park',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({window, on, items:[{camera, track}]})}).catch(()=>{});
 }
 async function bulkPark(){
   const items=[...SEL.values()];
   if(!items.length) return;
-  items.forEach(s=>applyParkLocal(s.camera, s.track, true)); SEL.clear(); renderDets();   // INSTANT
+  items.forEach(s=>applyParkLocal(s.window, s.camera, s.track, true)); SEL.clear(); renderDets();   // INSTANT
   showToast(`${items.length} crops parked for later`, null);
-  fetch('/api/hitl/park',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({window:WIN, on:true, items})}).catch(()=>{});
+  const byWin = {}; items.forEach(s=>(byWin[s.window]||(byWin[s.window]=[])).push({camera:s.camera, track:s.track}));
+  for (const [win, group] of Object.entries(byWin))
+    fetch('/api/hitl/park',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({window:win, on:true, items:group})}).catch(()=>{});
 }
 async function recompute(){
   const dirty=[...DIRTY_WINS];
