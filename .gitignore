@@ -16,6 +16,7 @@ env/
 # Data & generated outputs
 data/
 outputs/
+training_data/
 *.mp4
 *.avi
 *.mkv
