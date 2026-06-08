@@ -156,3 +156,28 @@ class LocalStore:
 
     def attendance(self, store_id: str = "s14", date=None) -> list[dict]:
         return []
+
+    # --- training registry + publish: DB-backed; stubs so pure-local doesn't crash ---
+    def confirmed_staff(self, store_id: str = "s14", date=None) -> list[dict]:
+        return []
+
+    def gallery_sources(self, store_id: str = "s14") -> set:
+        return set()
+
+    def register_model_version(self, kind, params, *, score=None, trained_on=0, notes="", active=True) -> int:
+        return 0
+
+    def list_model_versions(self, limit: int = 50) -> list[dict]:
+        return []
+
+    def active_model(self) -> dict | None:
+        return None
+
+    def publish_report(self, period, scope, report, *, store_id="s14", model_version=None, reviewer="human") -> int:
+        return 0
+
+    def list_published(self, store_id: str = "s14") -> list[dict]:
+        return []
+
+    def get_published(self, period, scope="day", store_id: str = "s14") -> dict | None:
+        return None

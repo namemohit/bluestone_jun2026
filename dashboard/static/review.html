@@ -136,6 +136,17 @@
   .reptable { width:100%; border-collapse:collapse; font-size:13px; max-width:680px; }
   .reptable th { text-align:left; color:var(--dim); font-weight:600; padding:8px 10px; border-bottom:1px solid var(--line); }
   .reptable td { padding:8px 10px; border-bottom:1px solid var(--line); }
+  .reptable tr.vact { background:rgba(76,141,255,.10); }
+  .rbtns { display:flex; gap:8px; }
+  .trainacts { display:flex; gap:9px; flex-wrap:wrap; margin:4px 0 14px; }
+  .chips { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:6px; }
+  .chip { background:var(--card); border:1px solid var(--line); border-radius:20px; padding:4px 11px; font-size:12px; color:var(--dim); }
+  .chip b { color:var(--ink); }
+  .up { color:var(--ok); font-weight:700; } .down { color:var(--no); font-weight:700; }
+  .delta { background:var(--card); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:10px; padding:11px 13px; margin:10px 0; font-size:13px; }
+  .okbox { background:rgba(55,184,106,.12); border:1px solid rgba(55,184,106,.4); border-radius:10px; padding:11px 13px; margin:10px 0; font-size:13px; color:var(--ink); }
+  .okbox.warn { background:rgba(227,160,43,.12); border-color:rgba(227,160,43,.45); }
+  .okbox.bad { background:rgba(224,83,61,.12); border-color:rgba(224,83,61,.45); }
 </style>
 </head>
 <body>
@@ -151,6 +162,7 @@
     <button class="tab active" onclick="showTab('review',this)">📋 Review</button>
     <button class="tab" onclick="showTab('dets',this)">🔍 All Detections</button>
     <button class="tab" onclick="showTab('report',this)">📊 Report</button>
+    <button class="tab" onclick="showTab('train',this)">🧠 Training</button>
   </div>
   <div id="tab-review">
   <div id="linkbar" class="linkbar">
@@ -177,6 +189,7 @@
     <div id="dets"><p class="hint">loading…</p></div>
   </div>
   <div id="tab-report" style="display:none"><div id="report"></div></div>
+  <div id="tab-train" style="display:none"><div id="train"></div></div>
 </main>
 <div id="toast"><b id="toastMsg"></b><button class="undo" onclick="undoLast()">↩ Undo</button><button class="x" onclick="hideToast()">✕</button></div>
 <div id="lightbox" class="lbox" onclick="closeZoom()"><div class="cap">click anywhere or press Esc to close</div><img id="lbimg"></div>
@@ -297,8 +310,10 @@ function showTab(name, btn){
   $('#tab-review').style.display = name==='review' ? '' : 'none';
   $('#tab-dets').style.display   = name==='dets'   ? '' : 'none';
   $('#tab-report').style.display = name==='report' ? '' : 'none';
+  $('#tab-train').style.display  = name==='train'  ? '' : 'none';
   if (name==='dets' && !DETS_LOADED) loadDetections();
   if (name==='report') loadReport();
+  if (name==='train') loadTraining();
 }
 async function loadReport(){
   const date = (WIN||'').split('_')[0] || '';
@@ -310,7 +325,9 @@ async function loadReport(){
              || '<tr><td colspan="4" class="empty">no staff marked yet</td></tr>';
   $('#report').innerHTML = `
     <div class="rephead"><div class="rtitle">📊 Closed-day report · ${r.date}</div>
-      <button class="ok" onclick="window.print()">🖨 Close Day &amp; Export</button></div>
+      <div class="rbtns">${RO?'':`<button class="ok" onclick="doPublish('${r.date}','day')">📤 Publish to client</button>`}
+        <button onclick="window.print()">🖨 Print / PDF</button></div></div>
+    <div id="pubmsg"></div>
     <div class="repcards">
       <div class="repcard"><div class="big">${c.unique_customers}</div>unique customers</div>
       <div class="repcard"><div class="big">${g.grouped}</div>arrived in groups <span class="hint">(${g.solo} solo)</span></div>
@@ -320,6 +337,79 @@ async function loadReport(){
     <h2>Employee attendance</h2>
     <table class="reptable"><thead><tr><th>Employee</th><th>Check-in</th><th>Check-out</th><th>Hours seen</th></tr></thead><tbody>${ts}</tbody></table>
     <p class="hint" style="margin-top:16px">Customer count = human-confirmed door check-ins across ${r.windows} processed hour(s). Resolve everything in the <b>All Detections</b> tab to finalize the numbers.</p>`;
+}
+
+async function doPublish(period, scope){
+  const m = $('#pubmsg');
+  if (!confirm(`Publish the ${scope} report for ${period} to the client (read-only) dashboard?`)) return;
+  m.innerHTML = '<p class="hint">publishing…</p>';
+  const r = await fetch('/api/hitl/publish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({period,scope})}).then(r=>r.json()).catch(()=>null);
+  if (!r || !r.ok){ m.innerHTML = '<div class="okbox bad">publish failed</div>'; return; }
+  m.innerHTML = `<div class="okbox">✓ Published <b>${r.period}</b> — ${r.unique_customers} customers · ${r.headcount} employees · model v${r.model_version||'?'}. The read-only client dashboard now serves this snapshot.</div>`;
+}
+
+async function loadTraining(){
+  $('#train').innerHTML = '<p class="hint">loading training status…</p>';
+  const t = await fetch('/api/hitl/training').then(r=>r.json()).catch(()=>null);
+  if (!t){ $('#train').innerHTML = '<p class="empty">could not load training</p>'; return; }
+  const a=t.active||{}, ap=a.params||{}, gl=t.gallery||{};
+  const ver = (t.versions||[]).map(v=>`<tr class="${v.active?'vact':''}"><td>v${v.version}${v.active?' ✓':''}</td><td>${v.kind}</td><td>${(v.params||{}).staff_sim??'—'}</td><td>${v.trained_on||0}</td><td>${v.created||''}</td><td class="hint">${v.notes||''}</td></tr>`).join('');
+  const gal = (gl.per_employee||[]).map(p=>`<span class="chip">${p.employee}: <b>${p.crops}</b></span>`).join(' ');
+  const pub = (t.published||[]).map(p=>`<span class="chip">${p.period} (${p.scope}) · v${p.model_version||'?'} · ${p.published_at}</span>`).join(' ') || '<span class="hint">none yet</span>';
+  const filt = DAY ? `whole day` : `hour ${WIN}`;
+  $('#train').innerHTML = `
+    <div class="rephead"><div class="rtitle">🧠 Training</div></div>
+    <div class="repcards">
+      <div class="repcard"><div class="big">v${a.version??'—'}</div>active model <span class="hint">(${a.kind||'none'})</span></div>
+      <div class="repcard"><div class="big">${ap.staff_sim??'—'}</div>match threshold</div>
+      <div class="repcard"><div class="big">${gl.employees||0}</div>staff in gallery <span class="hint">(${gl.embeddings||0} crops)</span></div>
+      <div class="repcard"><div class="big">${a.trained_on??0}</div>labels behind it</div>
+    </div>
+    ${RO?'':`<div class="trainacts">
+      <button class="ok" onclick="doTrain('rebuild')">🔄 Rebuild from labels</button>
+      <button onclick="doTrain('finetune')">🧠 Deep fine-tune (OSNet)</button>
+      <button onclick="doRerun()">♻ Re-run L2–L4 on ${filt} → see delta</button>
+    </div>`}
+    <div id="trainmsg"></div>
+    <h2>Staff gallery</h2><div class="chips">${gal||'<span class="hint">no staff enrolled yet — tag staff in Review</span>'}</div>
+    <h2>Published periods</h2><div class="chips">${pub}</div>
+    <h2>Model history</h2>
+    <table class="reptable"><thead><tr><th>version</th><th>kind</th><th>thr</th><th>labels</th><th>when</th><th>notes</th></tr></thead><tbody>${ver||'<tr><td colspan="6" class="empty">no training runs yet — click Rebuild</td></tr>'}</tbody></table>
+    <p class="hint" style="margin-top:14px"><b>Rebuild</b> = learning-free (gallery + threshold from your confirmed labels; instant, no GPU). <b>Deep fine-tune</b> = adapt the OSNet backbone (needs torchreid + more confirmed crops + a free GPU). After training, <b>Re-run</b> applies the active model to the chosen Review filter and shows the before→after delta.</p>`;
+}
+
+async function doTrain(mode){
+  const msg = $('#trainmsg');
+  msg.innerHTML = `<p class="hint">${mode==='rebuild'?'rebuilding gallery + threshold…':'starting deep fine-tune…'}</p>`;
+  const r = await fetch('/api/hitl/train',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})}).then(r=>r.json()).catch(()=>null);
+  if (!r){ msg.innerHTML = '<div class="okbox bad">training failed</div>'; return; }
+  if (mode==='rebuild'){ msg.innerHTML = `<div class="okbox">✓ ${r.summary||'rebuilt'}</div>`; loadTraining(); return; }
+  if (r.job) pollTrain(r.job);
+  else msg.innerHTML = `<div class="okbox">${r.message||JSON.stringify(r)}</div>`;
+}
+
+async function pollTrain(job){
+  const msg = $('#trainmsg');
+  for (let i=0;i<150;i++){
+    const st = await fetch('/api/hitl/train-status/'+job).then(r=>r.json()).catch(()=>null);
+    if (!st){ msg.innerHTML = '<div class="okbox bad">lost the job</div>'; return; }
+    const done = ['done','skipped','error'].includes(st.status);
+    const cls = st.status==='done' ? 'okbox' : st.status==='skipped' ? 'okbox warn' : st.status==='error' ? 'okbox bad' : 'delta';
+    msg.innerHTML = `<div class="${cls}"><b>Deep fine-tune</b> · ${st.status} ${st.progress||0}%<div class="pbar"><i style="width:${st.progress||0}%"></i></div><span class="hint">${st.message||''}</span></div>`;
+    if (done){ if (st.status==='done') loadTraining(); return; }
+    await new Promise(s=>setTimeout(s,2000));
+  }
+}
+
+async function doRerun(){
+  const msg = $('#trainmsg');
+  msg.innerHTML = `<p class="hint">re-running L2–L4 on ${WIN} with the active model… (this applies it)</p>`;
+  const r = await fetch('/api/hitl/rerun',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({window:WIN})}).then(r=>r.json()).catch(()=>null);
+  if (!r){ msg.innerHTML = '<div class="okbox bad">re-run failed</div>'; return; }
+  const b=r.total.before, a=r.total.after, d=r.total.delta;
+  const cell=(k,lbl)=>`<span class="chip">${lbl}: ${b[k]} → <b>${a[k]}</b> <span class="${d[k]>0?'up':d[k]<0?'down':''}">(${d[k]>=0?'+':''}${d[k]})</span></span>`;
+  msg.innerHTML = `<div class="delta"><b>Δ after re-run</b> · ${r.scope} · ${r.n_windows} window(s) · model v${(r.model||{}).version??'—'}
+    <div class="chips" style="margin-top:6px">${cell('customers','customers')} ${cell('auto_staff','auto-staff')} ${cell('entries','door entries')} ${cell('visits','matched')}</div></div>`;
 }
 let DETS_LOADED=false, DETDATA=null, DETF={cams:{C05:1,C11:1,C14:1}, minDur:0, from:'', to:''};
 async function loadDetections(){

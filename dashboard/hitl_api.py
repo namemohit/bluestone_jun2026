@@ -87,6 +87,9 @@ def _rerun_l4(window: str) -> None:
                 galp = _window_dir(window) / "gallery.json"
                 galp.write_text(json.dumps(gal), encoding="utf-8")
                 cmd += ["--gallery", str(galp)]
+                thr = ((store.active_model() or {}).get("params") or {}).get("staff_sim")
+                if thr:                                # use the trained threshold, not the default 0.6
+                    cmd += ["--staff-sim", str(thr)]
         except Exception:
             pass
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -460,6 +463,159 @@ def _emb_for_crop(crop):
     return {str(k).replace("\\", "/"): v for k, v in cache.items()}.get(str(crop).replace("\\", "/"))
 
 
+# ===== training: gallery + threshold rebuild (learning-free, no GPU) ===============
+def _cache_norm() -> dict:
+    """Load the OSNet embedding cache ONCE with normalized keys (for many lookups)."""
+    import pickle
+    p = "outputs/osnet_emb_cache.pkl"
+    if not os.path.exists(p):
+        return {}
+    try:
+        with open(p, "rb") as f:
+            cache = pickle.load(f)
+    except Exception:
+        return {}
+    return {str(k).replace("\\", "/"): v for k, v in cache.items()}
+
+
+def _l1_crop(window: str, camera: str, track) -> str | None:
+    sub = "L1_entry" if (camera or "").upper() == "C05" else f"L1_{camera}"
+    p = OUTPUTS / window / sub / "crops" / f"trk_{int(track):04d}.jpg"
+    return str(p) if p.exists() else None
+
+
+def _tune_threshold(by_emp: dict):
+    """Suggest a staff-sim cutoff that separates same-employee (positive) from cross-employee
+    (negative) cosine sims — midpoint of the hardest positive (5th pct) and hardest negative (95th
+    pct), clamped to a safe band. Falls back to 0.6 when there isn't enough data."""
+    import itertools
+    import numpy as np
+    emps = [(e, v) for e, v in by_emp.items() if v]
+    pos, neg = [], []
+    for _, embs in emps:
+        for a, b in itertools.combinations(embs, 2):
+            pos.append(float(np.dot(a, b)))
+    for i in range(len(emps)):
+        for j in range(i + 1, len(emps)):
+            for a in emps[i][1]:
+                for b in emps[j][1]:
+                    neg.append(float(np.dot(a, b)))
+    if len(pos) < 3 or len(neg) < 3:
+        return 0.6, len(pos), len(neg)            # too little data -> keep the safe hand-picked default
+    pos.sort(); neg.sort()
+    hard_pos = pos[max(0, int(0.05 * len(pos)) - 1)]          # hardest same-employee pair (5th pct)
+    hard_neg = neg[min(len(neg) - 1, int(0.95 * len(neg)))]   # hardest cross-employee pair (95th pct)
+    mid = (hard_pos + hard_neg) / 2.0 if hard_pos > hard_neg else 0.6   # overlap -> not separable -> default
+    # safe band: floor 0.55 guards against a CUSTOMER matching a staffer (the tuning pairs are staff-only,
+    # so they can't see that risk); cap 0.72 keeps genuinely-present staff recognizable.
+    thr = round(max(0.55, min(0.72, mid)), 2)
+    return thr, len(pos), len(neg)
+
+
+def _train_rebuild(date=None) -> dict:
+    """Learning-free 'training': fold every human-confirmed staff crop into the gallery (more
+    reference shots per employee -> sturdier auto-recognition) + re-tune the match threshold, then
+    register an active model version. Uses cached embeddings only — no GPU, safe during processing."""
+    import numpy as np
+    store_id = "s14"
+    sightings = store.confirmed_staff(store_id, date)
+    cache = _cache_norm()
+    have = store.gallery_sources(store_id)
+    enrolled = 0
+    for s in sightings:
+        key = (s["window"], s["track"])
+        if key in have:
+            continue
+        emb = None
+        if s.get("embedding"):
+            emb = np.asarray(s["embedding"], dtype="float32")
+        else:
+            crop = s.get("crop_url") or _l1_crop(s["window"], s["camera"], s["track"])
+            v = cache.get(str(crop).replace("\\", "/")) if crop else None
+            if v is not None:
+                emb = np.asarray(v, dtype="float32")
+        if emb is None:
+            continue
+        store.enroll_staff(s["employee_id"], store_id, emb,
+                           crop_url=s.get("crop_url"), window=s["window"], track=s["track"])
+        have.add(key)
+        enrolled += 1
+    by_emp = {}
+    for g in store.get_gallery(store_id):                      # tune from the full post-enroll gallery
+        try:
+            by_emp.setdefault(g["employee_id"], []).append(np.asarray(g["embedding"], dtype="float32"))
+        except Exception:
+            pass
+    thr, n_pos, n_neg = _tune_threshold(by_emp)
+    n_emb = sum(len(v) for v in by_emp.values())
+    params = {"staff_sim": thr, "employees": len(by_emp), "embeddings": n_emb,
+              "enrolled_new": enrolled, "pos_pairs": n_pos, "neg_pairs": n_neg, "scope": date or "all-time"}
+    ver = store.register_model_version(
+        "gallery", params, trained_on=len(sightings),
+        notes=f"gallery rebuild: {len(sightings)} confirmed sightings, +{enrolled} new embeddings"
+              + (f" ({date})" if date else ""), active=True)
+    return {"ok": True, "version": ver, "params": params,
+            "summary": f"v{ver}: {len(by_emp)} staff · {n_emb} reference embeddings (+{enrolled} new) · "
+                       f"threshold {thr} (from {n_pos} same / {n_neg} cross-employee pairs)"}
+
+
+def _train_finetune(date=None) -> dict:
+    """Launch the deep OSNet fine-tune as a detached background job; the tab polls /train-status/{job}.
+    The job itself checks prerequisites (torchreid + enough crops + a free GPU) and reports honestly."""
+    import time as _t
+    job_id = "ft_" + _t.strftime("%Y%m%d_%H%M%S")
+    jobf = OUTPUTS / "train_jobs" / f"{job_id}.json"
+    jobf.parent.mkdir(parents=True, exist_ok=True)
+    jobf.write_text(json.dumps({"status": "queued", "kind": "finetune", "job": job_id,
+                                "progress": 0, "message": "starting…"}), encoding="utf-8")
+    cmd = [sys.executable, "-m", "training.finetune_osnet", "--job", str(jobf)]
+    if date:
+        cmd += ["--date", date]
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)  # detached
+    return {"ok": True, "job": job_id, "mode": "finetune",
+            "message": "deep fine-tune started — watch progress in the Training tab"}
+
+
+@router.post("/train")
+def train(body: dict) -> dict:
+    """Initiate training. mode='rebuild' = gallery + threshold from confirmed labels (learning-free,
+    instant, no GPU). mode='finetune' = deep OSNet fine-tune (background job, needs a free GPU)."""
+    _guard_write()
+    mode = (body or {}).get("mode", "rebuild")
+    date = (body or {}).get("date") or None
+    if mode == "rebuild":
+        return _train_rebuild(date)
+    if mode == "finetune":
+        return _train_finetune(date)
+    raise HTTPException(400, "mode must be 'rebuild' or 'finetune'")
+
+
+@router.get("/train-status/{job}")
+def train_status(job: str) -> dict:
+    """Live progress for a background fine-tune job."""
+    if "/" in job or "\\" in job or ".." in job:
+        raise HTTPException(400, "bad job id")
+    jobf = OUTPUTS / "train_jobs" / f"{job}.json"
+    if not jobf.exists():
+        raise HTTPException(404, "no such job")
+    return json.loads(jobf.read_text(encoding="utf-8"))
+
+
+@router.get("/training")
+def training() -> dict:
+    """Training tab: active model, version history, the current gallery snapshot, published periods."""
+    from collections import Counter
+    gal = store.get_gallery("s14")
+    per = dict(Counter(g["employee_id"] for g in gal))
+    rank = _rank_labels()
+    return {"active": store.active_model(),
+            "versions": store.list_model_versions(20),
+            "gallery": {"employees": len(per), "embeddings": len(gal),
+                        "per_employee": [{"employee": rank.get(e) or f"#{e}", "crops": n}
+                                         for e, n in sorted(per.items())]},
+            "published": store.list_published()}
+
+
 @router.post("/allocate")
 def allocate(body: dict) -> dict:
     """Close-the-day: a human assigns ONE detection to a category. Always records a durable annotation
@@ -578,15 +734,67 @@ def _confirmed_entries(window):
     return entries, dwell
 
 
-def _day_report(date: str) -> dict:
+def _window_counts(window) -> dict:
+    """Counts that move when training changes the gallery/threshold — for the re-run delta."""
+    vj = OUTPUTS / window / "visits.json"
+    if not vj.exists():
+        return {"customers": 0, "entries": 0, "auto_staff": 0, "visits": 0}
+    c = json.loads(vj.read_text(encoding="utf-8")).get("counts", {})
+    visits, still = c.get("visits", 0), c.get("still_inside", 0)
+    try:
+        customers = len(_confirmed_entries(window)[0])
+    except Exception:
+        customers = visits + still
+    return {"customers": customers, "entries": visits + still,
+            "auto_staff": c.get("auto_staff", 0), "visits": visits}
+
+
+@router.post("/rerun")
+def rerun(body: dict) -> dict:
+    """Re-run L2-L4 (cached L1, no GPU) on the chosen Review filter — one hour or a whole date —
+    with the ACTIVE gallery + threshold, and return the before->after delta of the key counts.
+    'window' = 'YYYY-MM-DD' (whole day) or 'YYYY-MM-DD_HHMM' (one hour)."""
+    _guard_write()
+    target = (body or {}).get("window", "")
+    if not target:
+        raise HTTPException(400, "rerun needs a 'window' (a date for whole-day, or YYYY-MM-DD_HHMM)")
+    is_day = "_" not in target
+    if is_day:
+        import glob
+        windows = sorted({Path(p).parent.name for p in glob.glob(f"outputs/{target}_*/visits.json")})
+    else:
+        windows = [target]
+    keys = ("customers", "entries", "auto_staff", "visits")
+    rows, tb, ta = [], {k: 0 for k in keys}, {k: 0 for k in keys}
+    for w in windows:
+        before = _window_counts(w)
+        err = None
+        try:
+            _rerun_l4(w)
+        except HTTPException as e:
+            err = str(e.detail)[:200]
+        after = _window_counts(w)
+        rows.append({"window": w, "before": before, "after": after,
+                     "delta": {k: after[k] - before[k] for k in keys}, "error": err})
+        for k in keys:
+            tb[k] += before[k]; ta[k] += after[k]
+    return {"ok": True, "scope": "day" if is_day else "hour", "n_windows": len(windows),
+            "windows": rows,
+            "total": {"before": tb, "after": ta, "delta": {k: ta[k] - tb[k] for k in keys}},
+            "model": store.active_model()}
+
+
+def _day_report(date: str, windows=None) -> dict:
     """The B2B deliverable: human-confirmed unique customers + groups + dwell, and per-employee
-    check-in/out. Reuses logic.grouping.group_sessions + store.attendance."""
+    check-in/out. Reuses logic.grouping.group_sessions + store.attendance. Pass `windows` to scope
+    to a subset (e.g. a single hour for an hour-level publish)."""
     import glob
     import statistics
     from types import SimpleNamespace
     from logic.grouping import group_sessions
     entries, dwell = [], []
-    windows = sorted({Path(p).parent.name for p in glob.glob(f"outputs/{date}_*/visits.json")})
+    if windows is None:
+        windows = sorted({Path(p).parent.name for p in glob.glob(f"outputs/{date}_*/visits.json")})
     for win in windows:
         e, d = _confirmed_entries(win)
         entries += e
@@ -627,3 +835,37 @@ def report(date: str) -> dict:
     if not date or "/" in date or "\\" in date or ".." in date:
         raise HTTPException(400, "bad date")
     return _day_report(date)
+
+
+def _report_for(period: str, scope: str) -> dict:
+    if scope == "hour":
+        rep = _day_report(period.split("_")[0], windows=[period])
+    else:
+        rep = _day_report(period)
+    rep["period"], rep["scope"] = period, scope
+    return rep
+
+
+@router.post("/publish")
+def publish(body: dict) -> dict:
+    """Freeze the report for a period into a published snapshot the read-only public dashboard
+    serves to the B2B client. 'period' = 'YYYY-MM-DD' (scope=day) or 'YYYY-MM-DD_HHMM' (scope=hour)."""
+    _guard_write()
+    period = (body or {}).get("period", "")
+    scope = (body or {}).get("scope", "day")
+    if not period or "/" in period or "\\" in period or ".." in period:
+        raise HTTPException(400, "bad period")
+    if scope not in ("day", "hour"):
+        raise HTTPException(400, "scope must be 'day' or 'hour'")
+    report = _report_for(period, scope)
+    mv = (store.active_model() or {}).get("version")
+    pid = store.publish_report(period, scope, report, model_version=mv)
+    return {"ok": True, "id": pid, "period": period, "scope": scope, "model_version": mv,
+            "unique_customers": report["customers"]["unique_customers"],
+            "headcount": report["employees"]["headcount"]}
+
+
+@router.get("/published")
+def published() -> dict:
+    """Periods finalized for the client (read-only public dashboard reads these)."""
+    return {"published": store.list_published()}

@@ -198,6 +198,26 @@ from showroom.windows w
 left join showroom.visits v on v.window_id = w.id
 group by w.id;
 
+-- ---- published_reports: the FINALIZED client-facing snapshot per period --------------------
+--   "Publish" freezes the day's (or hour's) report so the read-only public dashboard surfaces it
+--   to the B2B customer. Append-only; latest per (period,scope) wins. No redeploy needed.
+create table if not exists showroom.published_reports (
+  id            bigint generated always as identity primary key,
+  store_id      text not null,
+  period        text not null,                                -- 'YYYY-MM-DD' (day) or 'YYYY-MM-DD_HHMM' (hour)
+  scope         text not null default 'day' check (scope in ('day','hour')),
+  report        jsonb not null,                               -- frozen customers/groups/employees snapshot
+  model_version integer,                                      -- model_versions row behind these numbers
+  published_by  text not null default 'human',
+  published_at  timestamptz not null default now()
+);
+create index if not exists published_by_period on showroom.published_reports (store_id, period, scope);
+-- the live client view = newest snapshot per (period,scope)
+create or replace view showroom.latest_published as
+select distinct on (store_id, period, scope) *
+from showroom.published_reports
+order by store_id, period, scope, published_at desc;
+
 -- ---- idempotent column adds: re-run this file to sync an already-created DB ----
 alter table showroom.labels    add column if not exists employee_id integer;
 alter table showroom.employees add column if not exists code text;

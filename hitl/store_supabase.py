@@ -439,3 +439,79 @@ class SupabaseStore:
         for e in data.get("open_sessions", []) + data.get("pre_window_exits", []):
             paths.add(e.get("crop"))
         return sum(1 for p in paths if p and storage.upload_crop(p))
+
+    # ===== training: model registry + gallery-rebuild source =====================
+    def confirmed_staff(self, store_id: str = "s14", date: str | None = None) -> list[dict]:
+        """Every HUMAN-confirmed staff sighting, for rebuilding the gallery: from annotations
+        (category='staff') + labels (verdict='employee'). Each -> {employee_id, window, camera,
+        track, crop_url, embedding(maybe None)}; caller fills missing embeddings from the cache."""
+        like = f"{date}_%" if date else "%"
+        out = []
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("select window_id, camera, track, crop_url, employee_id, embedding "
+                        "from latest_annotations where category='staff' and employee_id is not null "
+                        "and window_id like %s", (like,))
+            for r in cur.fetchall():
+                out.append({"employee_id": r["employee_id"], "window": r["window_id"], "camera": r["camera"],
+                            "track": r["track"], "crop_url": r["crop_url"], "embedding": r["embedding"]})
+            cur.execute("select window_id, in_track, employee_id from latest_labels "
+                        "where verdict='employee' and employee_id is not null and in_track is not null "
+                        "and window_id like %s", (like,))
+            for r in cur.fetchall():
+                out.append({"employee_id": r["employee_id"], "window": r["window_id"], "camera": "C05",
+                            "track": r["in_track"], "crop_url": None, "embedding": None})
+        return out
+
+    def gallery_sources(self, store_id: str = "s14") -> set:
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("select source_window, source_track from employee_gallery where store_id=%s", (store_id,))
+            return {(r["source_window"], r["source_track"]) for r in cur.fetchall()}
+
+    def register_model_version(self, kind: str, params: dict, *, score=None, trained_on: int = 0,
+                               notes: str = "", active: bool = True) -> int:
+        with self._cx() as cx, cx.cursor() as cur:
+            if active:
+                cur.execute("update model_versions set active=false where active=true")
+            cur.execute("insert into model_versions(kind,params,score,trained_on,active,notes) "
+                        "values(%s,%s,%s,%s,%s,%s) returning version",
+                        (kind, json.dumps(params), score, trained_on, active, notes))
+            return cur.fetchone()["version"]
+
+    def list_model_versions(self, limit: int = 50) -> list[dict]:
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("select version, kind, params, score, trained_on, active, notes, "
+                        "to_char(created_at at time zone 'Asia/Kolkata','YYYY-MM-DD HH24:MI') created "
+                        "from model_versions order by version desc limit %s", (limit,))
+            return [dict(r) for r in cur.fetchall()]
+
+    def active_model(self) -> dict | None:
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("select version, kind, params, score, trained_on, notes from model_versions "
+                        "where active=true order by version desc limit 1")
+            r = cur.fetchone()
+            return dict(r) if r else None
+
+    # ===== publish: the finalized client-facing snapshot =========================
+    def publish_report(self, period: str, scope: str, report: dict, *, store_id: str = "s14",
+                       model_version=None, reviewer: str = "human") -> int:
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("insert into published_reports(store_id,period,scope,report,model_version,published_by) "
+                        "values(%s,%s,%s,%s,%s,%s) returning id",
+                        (store_id, period, scope, json.dumps(report), model_version, reviewer))
+            return cur.fetchone()["id"]
+
+    def list_published(self, store_id: str = "s14") -> list[dict]:
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("select period, scope, model_version, "
+                        "to_char(published_at at time zone 'Asia/Kolkata','YYYY-MM-DD HH24:MI') published_at "
+                        "from latest_published where store_id=%s order by period desc, scope", (store_id,))
+            return [dict(r) for r in cur.fetchall()]
+
+    def get_published(self, period: str, scope: str = "day", store_id: str = "s14") -> dict | None:
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("select report, model_version, "
+                        "to_char(published_at at time zone 'Asia/Kolkata','YYYY-MM-DD HH24:MI') published_at "
+                        "from latest_published where store_id=%s and period=%s and scope=%s",
+                        (store_id, period, scope))
+            r = cur.fetchone()
+            return dict(r) if r else None
