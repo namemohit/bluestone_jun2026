@@ -306,8 +306,8 @@ def _grouped_detections(dets: list) -> dict:
                       "total": len(buckets.get(k, []))} for k in order}
     return {"grouped": True, "total": len(dets), "order": order, "buckets": buckets,
             "per_bucket": per_bucket, "confirmed": sum(1 for d in dets if d.get("confirmed")),
-            # 'inside' = auto-handled (already counted at the door) -> excluded from the close-the-day denominator
-            "close_total": sum(1 for d in dets if d.get("determination") != "inside"),
+            # the close now covers EVERY detection incl. 'inside' (a genuinely missed customer can hide there)
+            "close_total": len(dets),
             "counts": {k: len(buckets.get(k, [])) for k in order}}
 
 

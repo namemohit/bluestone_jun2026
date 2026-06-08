@@ -616,7 +616,7 @@ function renderDets(){
     const body = DOPEN.has(k) ? (arr.map(detCard).join('')||'<p class="empty">none</p>') : '';   // lazy-render: closed buckets fire no image loads (a whole day is ~12k crops)
     return `<div class="dgrp ${DOPEN.has(k)?'open':''}"><div class="ddhead" onclick="toggleGrp('${k}',this)"><b>${m.icon} ${m.title} · ${conf}/${arr.length}</b> <span class="hint">${m.note}</span> ${confAll}</div><div class="dbody"><div class="mini">${body}</div></div></div>`;
   };
-  const denom = (DETALL||[]).filter(d=>d.determination!=='inside').length;   // Inside = auto-handled, off the critical path
+  const denom = (DETALL||[]).length;   // close covers EVERY detection incl. Inside — a missed customer can hide there
   const totalConf = (DETALL||[]).filter(d=>d.confirmed).length;
   const prog = denom ? Math.round(100*totalConf/denom) : 0;
   const stale = DIRTY_WINS.size ? ` · <span class="stalehint">⚠ count may be stale — <button onclick="recompute()">↻ recompute</button></span>` : '';
