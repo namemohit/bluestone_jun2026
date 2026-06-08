@@ -386,6 +386,67 @@ def crop(path: str):
     raise HTTPException(404, "crop not found")
 
 
+@router.get("/frame")
+def frame(window: str, camera: str, track: int):
+    """The FULL source frame at a detection's time, with its trajectory overlaid (green start ->
+    red end) — context for 'did this person ENTER or just walk PAST?'. L1 keeps person crops only,
+    so the frame is extracted on-demand from the window's video slice."""
+    if HIDE_FACES:
+        raise HTTPException(403, "frames are hidden on this view")
+    _safe_window(window)
+    wdir = OUTPUTS / window
+    try:
+        wcfg = json.loads((wdir / "window.json").read_text(encoding="utf-8"))
+    except Exception:
+        raise HTTPException(404, "no such window")
+    cam = (camera or "").upper()
+    if cam == "C05":
+        l1dir, slice_name = Path(wcfg["l1"]), "entry.ts"
+    else:
+        l1dir = next((Path(d) for d in wcfg.get("interior", []) if Path(d).name == f"L1_{cam}"), None)
+        slice_name = f"{cam}.ts"
+    if not l1dir:
+        raise HTTPException(404, "camera not in this window")
+    try:
+        tj = json.loads((l1dir / "tracks.json").read_text(encoding="utf-8"))
+    except Exception:
+        raise HTTPException(404, "no tracks for this camera")
+    trk = next((t for t in tj.get("tracks", []) if t["track"] == track), None)
+    if not trk:
+        raise HTTPException(404, "no such track")
+    slice_path = wdir / "slices" / slice_name
+    if not slice_path.exists():
+        raise HTTPException(404, "source slice not available for this window")
+    import datetime
+    lbl = wcfg.get("label", "").split(" IST")[0]
+    try:                                                          # slice starts at the window's start IST
+        dt = datetime.datetime.strptime(lbl, "%Y-%m-%d %H:%M:%S")
+        win_start = (dt - datetime.datetime(1970, 1, 1)).total_seconds() - 5.5 * 3600
+    except Exception:
+        win_start = trk["first_ts"]
+    import cv2
+    import numpy as np
+    mid_ts = (trk["first_ts"] + trk.get("last_ts", trk["first_ts"])) / 2
+    offset = max(0.0, mid_ts - win_start)
+    pre = max(0.0, offset - 3.0)                                  # HEVC: fast-seek to a keyframe, then
+    cmd = ["ffmpeg", "-nostdin", "-loglevel", "error", "-ss", f"{pre:.3f}", "-i", str(slice_path),
+           "-ss", f"{offset - pre:.3f}", "-frames:v", "1", "-f", "image2pipe", "-vcodec", "mjpeg",
+           "-q:v", "3", "pipe:1"]                                 # accurate-decode forward -> a clean frame
+    proc = subprocess.run(cmd, capture_output=True)
+    fr = cv2.imdecode(np.frombuffer(proc.stdout, np.uint8), cv2.IMREAD_COLOR) if proc.stdout else None
+    if fr is None:
+        raise HTTPException(500, "could not extract the frame")
+    H, W = fr.shape[:2]
+    pts = [(int(p[1] * W), int(p[2] * H)) for p in trk.get("traj", []) if len(p) >= 3]
+    for i in range(1, len(pts)):
+        cv2.line(fr, pts[i - 1], pts[i], (0, 200, 255), 2)        # path -> amber
+    if pts:
+        cv2.circle(fr, pts[0], 8, (0, 220, 0), -1)                # start -> green
+        cv2.circle(fr, pts[-1], 8, (0, 0, 235), -1)              # end -> red
+    ok, buf = cv2.imencode(".jpg", fr, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
+    return Response(content=buf.tobytes(), media_type="image/jpeg")
+
+
 @router.post("/label")
 def label(body: dict) -> dict:
     _guard_write()

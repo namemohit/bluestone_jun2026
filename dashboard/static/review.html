@@ -121,6 +121,8 @@
   .dgrp.open .dbody { display:block; }
   .dcard { width:138px; position:relative; }
   .dsel { position:absolute; top:5px; left:5px; z-index:3; width:17px; height:17px; cursor:pointer; accent-color:var(--accent); }
+  .framebtn { position:absolute; top:3px; right:3px; z-index:3; padding:1px 5px; font-size:13px; line-height:1.5; background:rgba(0,0,0,.55); border:1px solid var(--line); border-radius:6px; cursor:pointer; }
+  .framebtn:hover { border-color:var(--accent); }
   .dcard.selected { outline:2px solid var(--accent); outline-offset:-1px; }
   .bulkbar { display:flex; align-items:center; gap:7px; flex-wrap:wrap; background:rgba(76,141,255,.13); border:1px solid var(--accent); border-radius:10px; padding:9px 13px; margin:10px 0; font-size:13px; position:sticky; top:6px; z-index:6; }
   .amenu { display:flex; gap:1px; justify-content:center; margin-top:5px; flex-wrap:wrap; }
@@ -224,6 +226,10 @@ let WIN = LS.get('win', null), sel = {open:null, pre:null}, RO = false, HIDE = f
 const cropImg = p => HIDE ? '<div class="nocrop" title="face hidden on this view">👤</div>' : `<img src="${cropURL(p)}" onclick="event.stopPropagation();zoom('${p}')" style="cursor:zoom-in" title="click to enlarge">`;
 
 function zoom(p){ if(HIDE||!p) return; $('#lbimg').src = cropURL(p); $('#lightbox').classList.add('show'); }
+function showFrame(window,camera,track){   // full source frame + trajectory, for the enter-vs-passby call
+  $('#lbimg').src = `/api/hitl/frame?window=${encodeURIComponent(window)}&camera=${camera}&track=${track}`;
+  $('#lightbox').classList.add('show');
+}
 function closeZoom(){ $('#lightbox').classList.remove('show'); }
 document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeZoom(); closeStaff(); closeMatches(); } });
 
@@ -476,13 +482,14 @@ function renderDets(){
     const k = d.camera+'|'+d.track, isSel = SEL.has(k);
     const badge = a ? `<div class="adone">✓ ${ALLOC[a]||a}</div>` : '';
     const chk = RO ? '' : `<input type="checkbox" class="dsel" ${isSel?'checked':''} title="select for bulk allocate" onclick="event.stopPropagation();toggleSel('${d.camera}',${d.track},'${d.crop||''}')">`;
+    const frameBtn = HIDE ? '' : `<button class="framebtn" title="see the full source frame + path — did they enter or walk past?" onclick="event.stopPropagation();showFrame('${WIN}','${d.camera}',${d.track})">📷</button>`;
     const menu = RO ? '' : `<div class="amenu">
       <button title="Customer" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','customer')">🛍️</button>
       <button title="Staff" onclick="openStaffPicker('det-${d.camera}-${d.track}',${d.track},'${d.crop||''}','${d.camera}')">👤</button>
       <button title="Not a person" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','not_person')">🚫</button>
       <button title="Passed by" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','passby')">🚶</button>
       <button title="Duplicate" onclick="allocate('${d.camera}',${d.track},'${d.crop||''}','duplicate')">🔁</button></div>`;
-    return `<div class="ev dcard ${a?'resolved':''} ${isSel?'selected':''}">${chk}${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}</div>${badge}${menu}</div>`;
+    return `<div class="ev dcard ${a?'resolved':''} ${isSel?'selected':''}">${chk}${frameBtn}${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}</div>${badge}${menu}</div>`;
   };
   const door=keep(r.door), inside=keep(r.inside), acc=keep(r.accounted), st=keep(r.street);
   const shown = door.length+inside.length+acc.length+st.length;
