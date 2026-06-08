@@ -171,6 +171,7 @@
   .stafflist { display:flex; flex-direction:column; gap:12px; }
   .scard { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
   .shead { display:flex; align-items:center; gap:12px; margin-bottom:10px; } .sthumb { height:72px; width:54px; object-fit:cover; border-radius:7px; } .sthumb.nocrop { display:inline-flex; align-items:center; justify-content:center; background:#2a323d; font-size:22px; }
+  .hourrep { background:rgba(76,141,255,.05); border:1px solid var(--line); border-radius:14px; padding:14px 18px; margin-bottom:18px; } .hourrep h2 { margin-top:16px; font-size:15px; } .hourrep h3 { font-size:13px; }
   .trainacts { display:flex; gap:9px; flex-wrap:wrap; margin:4px 0 14px; }
   .chips { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:6px; }
   .chip { background:var(--card); border:1px solid var(--line); border-radius:20px; padding:4px 11px; font-size:12px; color:var(--dim); }
@@ -201,6 +202,7 @@
     <button class="tab" onclick="showTab('train',this)">🧠 Training</button>
   </div>
   <div id="tab-review">
+  <div id="hourreport"></div>
   <div class="tfbar" style="display:none">⏱ time slice: <input type="time" id="tfrom" step="60" onchange="setTimeF('from',this.value)"> – <input type="time" id="tto" step="60" onchange="setTimeF('to',this.value)"> <span id="tfclear"></span><span class="hint" style="margin-left:auto">narrow the whole-day results to a sub-range (a single hour is already its own slice)</span></div>
   <div id="linkbar" class="linkbar">
     <span>Linking: <b id="linkInfo"></b></span>
@@ -303,6 +305,7 @@ async function load(){
   REV = await fetch(DAY ? `/api/hitl/visits-day/${WIN}` : `/api/hitl/visits/${WIN}`).then(r=>r.json());
   renderReview();
   loadAttendance();
+  loadHourReport();                          // per-hour report pinned at the top of review (cleared in whole-day mode)
   if (DETS_WIN !== WIN){ DETS_WIN = WIN; loadDetections(); }   // detections now live at the bottom of THIS tab
 }
 function renderReview(){
@@ -372,6 +375,53 @@ function showTab(name, btn){
   if (name==='report') loadReport();
   if (name==='train') loadTraining();
 }
+function reportHTML(r){   // the report BODY (KPIs -> footfall -> dwell/hot-leads -> groups -> staff); shared by the Report tab + each hour's review
+  const c=r.customers||{}, g=c.groups||{}, e=r.employees||{}, dw=c.dwell_min||{};
+  const k=r.kpis||{}, fbh=r.footfall_by_hour||[], grps=r.customer_groups||[], hot=r.hot_leads||[], seg=r.dwell_segments||{}, sd=r.staff_detail||[];
+  const hrf = w => (String(w).split('_')[1]||'').replace(/(\d\d)(\d\d)/,'$1:$2');
+  const thumb = (crop,cls)=> (crop && !HIDE) ? `<img src="${cropURL(crop)}" class="${cls||'rthumb'}">` : `<div class="${cls||'rthumb'} nocrop">👤</div>`;
+  const mins = s => s ? Math.round(s/60)+'m' : '—';
+  const maxF = Math.max(1, ...fbh.map(x=>x.entries));
+  const badge = t => `<span class="cbadge">${t}</span>`;
+  return `
+    <h2>At a glance ${badge('high confidence')}</h2>
+    <div class="repcards">
+      <div class="repcard"><div class="big">${k.footfall??c.unique_customers??0}</div>footfall <span class="hint">unique entries</span></div>
+      <div class="repcard"><div class="big">${k.capture_rate!=null?(k.capture_rate+'<span class="u">%</span>'):'—'}</div>capture rate <span class="hint">${k.passersby??0} walked past</span></div>
+      <div class="repcard"><div class="big">${k.peak_occupancy??'—'}</div>peak inside at once</div>
+      <div class="repcard"><div class="big">${k.avg_dwell_min??dw.mean??'—'}<span class="u">min</span></div>avg dwell <span class="hint">median ${dw.median??'—'}</span></div>
+      <div class="repcard"><div class="big">${g.grouped??0}</div>arrived in groups <span class="hint">${g.solo??0} solo</span></div>
+      <div class="repcard"><div class="big">${k.staff_on_duty??e.headcount??0}</div>staff on duty</div>
+    </div>
+    ${(fbh.length>1)?`<h2>Footfall by hour</h2><div class="fbar">${fbh.map(x=>`<div class="fcol" title="${x.entries} entries at ${x.hour}"><div class="fval">${x.entries}</div><div class="fbarfill" style="height:${Math.round(70*x.entries/maxF)+2}px"></div><div class="flab">${x.hour.slice(0,2)}h</div></div>`).join('')}</div>`:''}
+    <h2>How long they stayed</h2>
+    <div class="repcards">
+      <div class="repcard"><div class="big">${seg.browsers||0}</div>browsers <span class="hint">&lt; 2 min</span></div>
+      <div class="repcard"><div class="big">${seg.engaged||0}</div>engaged <span class="hint">2–10 min</span></div>
+      <div class="repcard"><div class="big" style="color:var(--ok)">${seg.serious||0}</div>serious 🔥 <span class="hint">&gt; 10 min</span></div>
+    </div>
+    ${hot.length?`<h3>🔥 Hot leads — longest dwell <span class="hint">(your follow-up list)</span></h3><div class="hotrow">${hot.map(h=>`<figure class="hotcell">${thumb(h.crop)}<figcaption><b>${mins(h.dwell_s)}</b><br>${hrf(h.window)} · in ${h.in_ist||'—'}</figcaption></figure>`).join('')}</div>`:''}
+    <h2>Customers by group ${badge('high confidence')} <span class="hint">grouped by arrival time</span></h2>
+    <div class="grouplist">${grps.map(gr=>`<div class="gcard"><div class="ghead"><b>Group ${gr.group_id}</b> · ${gr.size} ${gr.size>1?'people':'person'} <span class="hint">— ${gr.reason}</span></div>
+      <div class="gmembers">${gr.members.map(m=>`<figure class="gcell">${thumb(m.crop)}<figcaption>${m.in_ist||'—'}${m.out_ist?'<br>→ '+m.out_ist:''}<br><span class="hint">${m.dwell_s?mins(m.dwell_s)+' dwell':'no exit yet'}</span></figcaption></figure>`).join('')}</div></div>`).join('')||'<p class="empty">no customers yet</p>'}</div>
+    <h2>Staff — time in / out</h2>
+    <div class="stafflist">${sd.map(s=>`<div class="scard"><div class="shead">${thumb(s.crop,'sthumb')}<div><b>${s.code||''}${s.name?' · '+s.name:''}</b><br><span class="hint">${s.first_in||'—'} → ${s.last_out||'—'} · ${s.total_dwell_min}m on floor · ${s.span_min}m span</span></div></div>
+      <table class="reptable mini2"><thead><tr><th>hour</th><th>in</th><th>out</th><th>dwell</th></tr></thead><tbody>${(s.sightings||[]).map(t=>`<tr><td>${hrf(t.window)}</td><td>${t.in||'—'}</td><td>${t.out||'—'}</td><td>${t.dwell_min}m</td></tr>`).join('')}</tbody></table></div>`).join('')||'<p class="empty">no staff enrolled yet</p>'}</div>`;
+}
+async function loadHourReport(){   // the SAME report pinned to the top of review — per-hour for one hour, the NET for the whole day
+  const box = $('#hourreport'); if(!box || !WIN){ if(box) box.innerHTML=''; return; }
+  box.innerHTML = '<div class="hourrep"><p class="hint">building report…</p></div>';
+  const url = DAY ? '/api/hitl/report/'+encodeURIComponent(WIN)            // whole day = net of all hours
+                  : '/api/hitl/report-window/'+encodeURIComponent(WIN);    // one hour = its slice
+  const r = await fetch(url).then(x=>x.json()).catch(()=>null);
+  if(!r){ box.innerHTML=''; return; }
+  const title = DAY ? `Whole day · ${WIN} <span class="hint">— net of every hour below</span>`
+                    : `This hour · ${(WIN.split('_')[1]||'').replace(/(\d\d)(\d\d)/,'$1:$2')} <span class="hint">— this hour's slice of the day</span>`;
+  const acts = DAY ? `<button onclick="window.print()">🖨 Print / PDF</button>${RO?'':` <button class="ok" onclick="doPublish('${WIN}','day')">📤 Publish day</button>`}`
+                   : (RO?'':`<button class="ok" onclick="doPublish('${WIN}','hour')">✓ Accept this hour</button>`);
+  box.innerHTML = `<div class="hourrep"><div class="rephead"><div class="rtitle">📊 ${title}</div><div class="rbtns">${acts}</div></div>
+    <div id="pubmsg"></div>${reportHTML(r)}</div>`;
+}
 async function loadReport(){
   const date = (WIN||'').split('_')[0] || '';
   const dirtyToday = [...DIRTY_WINS].filter(w=>w.startsWith(date));
@@ -385,13 +435,7 @@ async function loadReport(){
     fetch('/api/hitl/publish-history').then(x=>x.json()).then(x=>x.history||[]).catch(()=>[])
   ]);
   if (!r){ $('#report').innerHTML = '<p class="empty">could not build the report</p>'; return; }
-  const c=r.customers, g=c.groups, e=r.employees, dw=c.dwell_min||{};
-  const k=r.kpis||{}, fbh=r.footfall_by_hour||[], grps=r.customer_groups||[], hot=r.hot_leads||[], seg=r.dwell_segments||{}, sd=r.staff_detail||[];
-  const hrf = w => (String(w).split('_')[1]||'').replace(/(\d\d)(\d\d)/,'$1:$2');
-  const thumb = (crop,cls)=> (crop && !HIDE) ? `<img src="${cropURL(crop)}" class="${cls||'rthumb'}">` : `<div class="${cls||'rthumb'} nocrop">👤</div>`;
-  const mins = s => s ? Math.round(s/60)+'m' : '—';
-  const maxF = Math.max(1, ...fbh.map(x=>x.entries));
-  const badge = t => `<span class="cbadge">${t}</span>`;
+  const c=r.customers, g=c.groups, e=r.employees;
   // context: what changed since this day was last published
   const last = ph.find(p=>p.period===date && p.scope==='day');
   const chg = d => `<span class="${d>0?'up':d<0?'down':''}">(${d>=0?'+':''}${d})</span>`;
@@ -417,29 +461,7 @@ async function loadReport(){
         <button onclick="window.print()">🖨 Print / PDF</button></div></div>
     <div id="pubmsg"></div>
     ${banner}
-    <h2>Day at a glance ${badge('high confidence')}</h2>
-    <div class="repcards">
-      <div class="repcard"><div class="big">${k.footfall??c.unique_customers}</div>footfall <span class="hint">unique entries</span></div>
-      <div class="repcard"><div class="big">${k.capture_rate!=null?(k.capture_rate+'<span class="u">%</span>'):'—'}</div>capture rate <span class="hint">${k.passersby??0} walked past</span></div>
-      <div class="repcard"><div class="big">${k.peak_occupancy??'—'}</div>peak inside at once</div>
-      <div class="repcard"><div class="big">${k.avg_dwell_min??dw.mean??'—'}<span class="u">min</span></div>avg dwell <span class="hint">median ${dw.median??'—'}</span></div>
-      <div class="repcard"><div class="big">${g.grouped}</div>arrived in groups <span class="hint">${g.solo} solo</span></div>
-      <div class="repcard"><div class="big">${k.staff_on_duty??e.headcount}</div>staff on duty</div>
-    </div>
-    ${fbh.length?`<h2>Footfall by hour</h2><div class="fbar">${fbh.map(x=>`<div class="fcol" title="${x.entries} entries at ${x.hour}"><div class="fval">${x.entries}</div><div class="fbarfill" style="height:${Math.round(70*x.entries/maxF)+2}px"></div><div class="flab">${x.hour.slice(0,2)}h</div></div>`).join('')}</div>`:''}
-    <h2>How long they stayed</h2>
-    <div class="repcards">
-      <div class="repcard"><div class="big">${seg.browsers||0}</div>browsers <span class="hint">&lt; 2 min</span></div>
-      <div class="repcard"><div class="big">${seg.engaged||0}</div>engaged <span class="hint">2–10 min</span></div>
-      <div class="repcard"><div class="big" style="color:var(--ok)">${seg.serious||0}</div>serious 🔥 <span class="hint">&gt; 10 min</span></div>
-    </div>
-    ${hot.length?`<h3>🔥 Hot leads — longest dwell <span class="hint">(your follow-up list)</span></h3><div class="hotrow">${hot.map(h=>`<figure class="hotcell">${thumb(h.crop)}<figcaption><b>${mins(h.dwell_s)}</b><br>${hrf(h.window)} · in ${h.in_ist||'—'}</figcaption></figure>`).join('')}</div>`:''}
-    <h2>Customers by group ${badge('high confidence')} <span class="hint">grouped by arrival time</span></h2>
-    <div class="grouplist">${grps.map(gr=>`<div class="gcard"><div class="ghead"><b>Group ${gr.group_id}</b> · ${gr.size} ${gr.size>1?'people':'person'} <span class="hint">— ${gr.reason}</span></div>
-      <div class="gmembers">${gr.members.map(m=>`<figure class="gcell">${thumb(m.crop)}<figcaption>${m.in_ist||'—'}${m.out_ist?'<br>→ '+m.out_ist:''}<br><span class="hint">${m.dwell_s?mins(m.dwell_s)+' dwell':'no exit yet'}</span></figcaption></figure>`).join('')}</div></div>`).join('')||'<p class="empty">no customers yet</p>'}</div>
-    <h2>Staff — time in / out across the day</h2>
-    <div class="stafflist">${sd.map(s=>`<div class="scard"><div class="shead">${thumb(s.crop,'sthumb')}<div><b>${s.code||''}${s.name?' · '+s.name:''}</b><br><span class="hint">${s.first_in||'—'} → ${s.last_out||'—'} · ${s.total_dwell_min}m on floor · ${s.span_min}m span</span></div></div>
-      <table class="reptable mini2"><thead><tr><th>hour</th><th>in</th><th>out</th><th>dwell</th></tr></thead><tbody>${(s.sightings||[]).map(t=>`<tr><td>${hrf(t.window)}</td><td>${t.in||'—'}</td><td>${t.out||'—'}</td><td>${t.dwell_min}m</td></tr>`).join('')}</tbody></table></div>`).join('')||'<p class="empty">no staff enrolled yet</p>'}</div>
+    ${reportHTML(r)}
     <p class="hint">⏳ Age &amp; gender estimates will appear here as a clearly-labelled “rough estimate” section (separate model, lower confidence).</p>
     <h2>Published reports — repository</h2>
     ${repo}

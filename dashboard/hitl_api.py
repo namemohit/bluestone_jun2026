@@ -1155,20 +1155,26 @@ def _day_report(date: str, windows=None) -> dict:
             pass
     footfall = len(entries)
     capture_rate = round(100 * footfall / (footfall + passersby), 1) if (footfall + passersby) else None
-    staff_detail = []                                                # per staffer: each in/out -> dwell, total, span
+    winset = set(windows)
+    staff_detail = []                                                # per staffer: each in/out -> dwell, total, span (scoped to `windows`)
     for a in att:
-        if not a.get("sightings"):
-            continue
-        tl, total = [], 0
+        tl, total, times = [], 0, []
         for w in a.get("timeline", []):
+            if w["window"] not in winset:                            # scope to this report's hours (per-hour report shows that hour's staff)
+                continue
             dw = max(0, secs(w.get("out")) - secs(w.get("in")))
             total += dw
+            times += [w.get("in"), w.get("out")]
             tl.append({"window": w["window"], "in": w.get("in"), "out": w.get("out"),
                        "dwell_min": round(dw / 60, 1), "crop": w.get("crop")})
-        span = (secs(a.get("last_seen")) - secs(a.get("first_seen"))) if (a.get("first_seen") and a.get("last_seen")) else 0
+        if not tl:
+            continue
+        times = [t for t in times if t]
+        fi, lo = (min(times), max(times)) if times else (None, None)
+        span = (secs(lo) - secs(fi)) if (fi and lo) else 0
         staff_detail.append({"code": rank.get(a["id"], a.get("code")), "name": a.get("name"),
                              "crop": next((t["crop"] for t in tl if t.get("crop")), None),
-                             "first_in": a.get("first_seen"), "last_out": a.get("last_seen"),
+                             "first_in": fi, "last_out": lo,
                              "span_min": round(span / 60, 1), "total_dwell_min": round(total / 60, 1),
                              "sightings": tl})
 
@@ -1199,6 +1205,14 @@ def report(date: str) -> dict:
     if not date or "/" in date or "\\" in date or ".." in date:
         raise HTTPException(400, "bad date")
     return _day_report(date)
+
+
+@router.get("/report-window/{window}")
+def report_window(window: str) -> dict:
+    """The SAME report scoped to one hour — each hour's review shows its slice of the day total
+    (the day report is a sum of these hourly reports)."""
+    _safe_window(window)
+    return _day_report(window.split("_")[0], windows=[window])
 
 
 def _report_for(period: str, scope: str) -> dict:
