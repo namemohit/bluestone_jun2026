@@ -318,7 +318,13 @@ def index():
 
 
 @app.get("/review", response_class=HTMLResponse)
+@app.get("/report", response_class=HTMLResponse)
+@app.get("/reports", response_class=HTMLResponse)
+@app.get("/train", response_class=HTMLResponse)
+@app.get("/training", response_class=HTMLResponse)
 def review_page():
+    """The review SPA. The URL path selects the tab client-side, so /report and /train are shareable
+    deep-links to the same page (review = reconciliation, report = day/hour report, train = training)."""
     return (STATIC / "review.html").read_text(encoding="utf-8")
 
 

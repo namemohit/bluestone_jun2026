@@ -278,7 +278,10 @@ async function loadWindows() {
     const best = pool.reduce((a,b)=>(b.visits||0)>(a.visits||0)?b:a, pool[0]);
     if (!WIN || (!r.windows.some(w=>w.window===WIN) && !dates.includes(WIN))) WIN = best.window; // keep selection (incl. a whole-day pick)
     sel.value = WIN; load();
-    if (!TAB_RESTORED){ TAB_RESTORED = true; showTab(LS.get('tab','review')); }  // restore tab once (not on auto-refresh)
+    if (!TAB_RESTORED){ TAB_RESTORED = true;                                       // pick the tab from the URL path (/report, /train) else last-used
+      const seg=(location.pathname.replace(/\/+$/,'').split('/').pop()||'').toLowerCase();
+      const fromPath={report:'report',reports:'report',train:'train',training:'train',review:'review'}[seg];
+      showTab(fromPath || LS.get('tab','review')); }
   } else $('#visits').innerHTML = '<p class="empty">No processed windows yet.</p>';
 }
 let autoTimer = null;
@@ -367,6 +370,7 @@ function showTab(name, btn){
   if (!$('#tab-'+name)) name = 'review';    // stale/removed tab (e.g. old 'dets') -> Review
   if (!btn) btn = [...document.querySelectorAll('.tab')].find(t=>(t.getAttribute('onclick')||'').includes("'"+name+"'"));
   LS.set('tab', name);                      // remember the active tab across refreshes
+  try { history.replaceState(null, '', '/'+name); } catch(e){}   // keep the URL shareable: /review, /report, /train
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   if (btn) btn.classList.add('active');
   $('#tab-review').style.display = name==='review' ? '' : 'none';
@@ -408,17 +412,20 @@ function reportHTML(r){   // the report BODY (KPIs -> footfall -> dwell/hot-lead
     <div class="stafflist">${sd.map(s=>`<div class="scard"><div class="shead">${thumb(s.crop,'sthumb')}<div><b>${s.code||''}${s.name?' · '+s.name:''}</b><br><span class="hint">${s.first_in||'—'} → ${s.last_out||'—'} · ${s.total_dwell_min}m on floor · ${s.span_min}m span</span></div></div>
       <table class="reptable mini2"><thead><tr><th>hour</th><th>in</th><th>out</th><th>dwell</th></tr></thead><tbody>${(s.sightings||[]).map(t=>`<tr><td>${hrf(t.window)}</td><td>${t.in||'—'}</td><td>${t.out||'—'}</td><td>${t.dwell_min}m</td></tr>`).join('')}</tbody></table></div>`).join('')||'<p class="empty">no staff enrolled yet</p>'}</div>`;
 }
+let _hrSeq = 0;
 async function loadHourReport(){   // the SAME report pinned to the top of review — per-hour for one hour, the NET for the whole day
   const box = $('#hourreport'); if(!box || !WIN){ if(box) box.innerHTML=''; return; }
+  const seq = ++_hrSeq, reqWin = WIN, reqDay = DAY;                        // guard: a slow whole-day fetch must NOT clobber a newer hour view
   box.innerHTML = '<div class="hourrep"><p class="hint">building report…</p></div>';
-  const url = DAY ? '/api/hitl/report/'+encodeURIComponent(WIN)            // whole day = net of all hours
-                  : '/api/hitl/report-window/'+encodeURIComponent(WIN);    // one hour = its slice
+  const url = reqDay ? '/api/hitl/report/'+encodeURIComponent(reqWin)             // whole day = net of all hours
+                     : '/api/hitl/report-window/'+encodeURIComponent(reqWin);     // one hour = its slice
   const r = await fetch(url).then(x=>x.json()).catch(()=>null);
+  if (seq !== _hrSeq) return;                                              // a newer load() superseded this one -> drop the stale response
   if(!r){ box.innerHTML=''; return; }
-  const title = DAY ? `Whole day · ${WIN} <span class="hint">— net of every hour below</span>`
-                    : `This hour · ${(WIN.split('_')[1]||'').replace(/(\d\d)(\d\d)/,'$1:$2')} <span class="hint">— this hour's slice of the day</span>`;
-  const acts = DAY ? `<button onclick="window.print()">🖨 Print / PDF</button>${RO?'':` <button class="ok" onclick="doPublish('${WIN}','day')">📤 Publish day</button>`}`
-                   : (RO?'':`<button class="ok" onclick="doPublish('${WIN}','hour')">✓ Accept this hour</button>`);
+  const title = reqDay ? `Whole day · ${reqWin} <span class="hint">— net of every hour below</span>`
+                       : `This hour · ${(reqWin.split('_')[1]||'').replace(/(\d\d)(\d\d)/,'$1:$2')} <span class="hint">— this hour's slice of the day</span>`;
+  const acts = reqDay ? `<button onclick="window.print()">🖨 Print / PDF</button>${RO?'':` <button class="ok" onclick="doPublish('${reqWin}','day')">📤 Publish day</button>`}`
+                      : (RO?'':`<button class="ok" onclick="doPublish('${reqWin}','hour')">✓ Accept this hour</button>`);
   box.innerHTML = `<div class="hourrep"><div class="rephead"><div class="rtitle">📊 ${title}</div><div class="rbtns">${acts}</div></div>
     <div id="pubmsg"></div>${reportHTML(r)}</div>`;
 }

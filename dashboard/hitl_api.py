@@ -1080,6 +1080,37 @@ def _entry_crop_info(window):
     return info
 
 
+def _passby_count(window) -> int:
+    """Fast pass-by count for the report's capture rate: C05 door tracks whose path is mostly inside
+    the street_mask and that aren't an accounted visit. Reads only C05 tracks.json + visits.json —
+    no Supabase, no interior cams — so it's ~12x cheaper than a full _classify_detections pass."""
+    try:
+        wdir = OUTPUTS / window
+        wcfg = json.loads((wdir / "window.json").read_text(encoding="utf-8"))
+        cfg = json.loads(Path(wcfg["config"]).read_text(encoding="utf-8"))
+        street, sfrac = cfg.get("street_mask", []), cfg.get("street_drop_frac", 0.5)
+        if not street:
+            return 0
+        tracks = json.loads((Path(wcfg["l1"]) / "tracks.json").read_text(encoding="utf-8")).get("tracks", [])
+        vj = json.loads((wdir / "visits.json").read_text(encoding="utf-8"))
+    except Exception:
+        return 0
+    accounted = set()
+    for v in vj.get("visits", []):
+        accounted.update({v["in_track"], v["out_track"]})
+    for e in vj.get("open_sessions", []) + vj.get("pre_window_exits", []):
+        accounted.add(e["track"])
+    for st in vj.get("staff", []):
+        accounted.add(st.get("track"))
+    n = 0
+    for t in tracks:
+        traj = t.get("traj", [])
+        if t["track"] not in accounted and traj and \
+                sum(_point_in_poly(x, y, street) for _, x, y, _ in traj) / len(traj) > sfrac:
+            n += 1
+    return n
+
+
 def _day_report(date: str, windows=None) -> dict:
     """The B2B deliverable: human-confirmed unique customers + groups + dwell, and per-employee
     check-in/out. Reuses logic.grouping.group_sessions + store.attendance. Pass `windows` to scope
@@ -1147,12 +1178,7 @@ def _day_report(date: str, windows=None) -> dict:
             peak_occupancy = max(peak_occupancy, c.get("peak_occupancy", 0) or 0)
         except Exception:
             pass
-    passersby = 0                                                     # window-conversion: who walked past vs entered
-    for win in windows:
-        try:
-            passersby += sum(1 for d in _classify_detections(win, with_dims=False) if d.get("determination") == "passby")
-        except Exception:
-            pass
+    passersby = sum(_passby_count(win) for win in windows)            # window-conversion: walked past vs entered (fast: C05 + visits.json only)
     footfall = len(entries)
     capture_rate = round(100 * footfall / (footfall + passersby), 1) if (footfall + passersby) else None
     winset = set(windows)
