@@ -3,7 +3,7 @@ mode, complementing the learning-free gallery rebuild).
 
 Wired end-to-end — job file + live progress + a model_versions row — and it ACTIVATES only when the
 prerequisites are real, so it never produces a garbage model from too little data:
-  * torchreid installed            (pip install torchreid)  -> the OSNet backbone + training loop
+  * OSNet backbone                 (boxmot.reid.backbones.osnet — already installed, no torchreid needed)
   * enough labelled data           (>= MIN_IDS employees, each >= MIN_PER_ID confirmed crops)
   * a free GPU                      (don't run while the day is still processing)
 
@@ -82,12 +82,11 @@ def main() -> None:
 
     try:
         import torch  # noqa: F401
-        import torchreid  # noqa: F401
-    except Exception:
-        msg = ("torchreid not installed — deep fine-tune needs it for the OSNet backbone + training "
-               "loop. Run:  pip install torchreid   (then re-run). The learning-free 'Rebuild' mode "
-               "works without it.")
-        _write(job, status="skipped", reason="needs_torchreid", message=msg, progress=100,
+        from boxmot.reid.backbones.osnet import osnet_x1_0  # the OSNet arch, already installed (no torchreid)
+    except Exception as e:
+        msg = (f"OSNet backbone unavailable ({type(e).__name__}) — boxmot should provide it via "
+               f"boxmot.reid.backbones.osnet. The learning-free 'Rebuild' mode works regardless.")
+        _write(job, status="skipped", reason="no_backbone", message=msg, progress=100,
                data=counts, finished_at=time.strftime("%Y-%m-%d %H:%M:%S"))
         print("[finetune] " + msg)
         return
@@ -95,7 +94,6 @@ def main() -> None:
     # ---- prerequisites met: real classifier fine-tune of OSNet on the staff crops ----------------
     import numpy as np  # noqa: F401
     import torch
-    import torchreid
     import cv2
 
     ids = sorted(eligible)
@@ -105,7 +103,8 @@ def main() -> None:
     _write(job, stage="building", message=f"fine-tuning OSNet: {len(ids)} identities, {len(samples)} crops on {dev}",
            identities=len(ids), crops=len(samples), epochs=args.epochs, progress=8)
 
-    model = torchreid.models.build_model("osnet_x1_0", num_classes=len(ids), pretrained=True)
+    # ImageNet-pretrained OSNet backbone + a fresh softmax head over THIS store's staff identities
+    model = osnet_x1_0(num_classes=len(ids), pretrained=True, loss="softmax")
     model = model.to(dev).train()
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     lossf = torch.nn.CrossEntropyLoss()
