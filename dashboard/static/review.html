@@ -383,7 +383,7 @@ function reportHTML(r){   // the report BODY (KPIs -> footfall -> dwell/hot-lead
   const c=r.customers||{}, g=c.groups||{}, e=r.employees||{}, dw=c.dwell_min||{};
   const k=r.kpis||{}, fbh=r.footfall_by_hour||[], grps=r.customer_groups||[], hot=r.hot_leads||[], seg=r.dwell_segments||{}, sd=r.staff_detail||[];
   const hrf = w => (String(w).split('_')[1]||'').replace(/(\d\d)(\d\d)/,'$1:$2');
-  const thumb = (crop,cls)=> (crop && !HIDE) ? `<img src="${cropURL(crop)}" class="${cls||'rthumb'}">` : `<div class="${cls||'rthumb'} nocrop">👤</div>`;
+  const thumb = (crop,cls)=> (crop && !HIDE) ? `<img src="${cropURL(crop)}" class="${cls||'rthumb'}" style="cursor:zoom-in" onclick="zoom('${crop}')">` : `<div class="${cls||'rthumb'} nocrop">👤</div>`;
   const mins = s => s ? Math.round(s/60)+'m' : '—';
   const maxF = Math.max(1, ...fbh.map(x=>x.entries));
   const badge = t => `<span class="cbadge">${t}</span>`;

@@ -1181,6 +1181,13 @@ def _day_report(date: str, windows=None) -> dict:
     passersby = sum(_passby_count(win) for win in windows)            # window-conversion: walked past vs entered (fast: C05 + visits.json only)
     footfall = len(entries)
     capture_rate = round(100 * footfall / (footfall + passersby), 1) if (footfall + passersby) else None
+    gal = {}                                                         # enrolled face per staffer = the reliable thumbnail (door crop can be the wrong person)
+    try:
+        for ge in store.get_gallery():
+            if ge.get("employee_id") and ge.get("crop_url"):
+                gal.setdefault(ge["employee_id"], (ge["crop_url"] or "").replace("\\", "/"))
+    except Exception:
+        pass
     winset = set(windows)
     staff_detail = []                                                # per staffer: each in/out -> dwell, total, span (scoped to `windows`)
     for a in att:
@@ -1199,7 +1206,7 @@ def _day_report(date: str, windows=None) -> dict:
         fi, lo = (min(times), max(times)) if times else (None, None)
         span = (secs(lo) - secs(fi)) if (fi and lo) else 0
         staff_detail.append({"code": rank.get(a["id"], a.get("code")), "name": a.get("name"),
-                             "crop": next((t["crop"] for t in tl if t.get("crop")), None),
+                             "crop": gal.get(a["id"]) or next((t["crop"] for t in tl if t.get("crop")), None),
                              "first_in": fi, "last_out": lo,
                              "span_min": round(span / 60, 1), "total_dwell_min": round(total / 60, 1),
                              "sightings": tl})
