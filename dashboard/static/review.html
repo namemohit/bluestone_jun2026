@@ -321,7 +321,7 @@ async function loadReport(){
     <table class="reptable"><thead><tr><th>Employee</th><th>Check-in</th><th>Check-out</th><th>Hours seen</th></tr></thead><tbody>${ts}</tbody></table>
     <p class="hint" style="margin-top:16px">Customer count = human-confirmed door check-ins across ${r.windows} processed hour(s). Resolve everything in the <b>All Detections</b> tab to finalize the numbers.</p>`;
 }
-let DETS_LOADED=false, DETDATA=null, DETF={cams:{C05:1,C11:1,C14:1}, minDur:0};
+let DETS_LOADED=false, DETDATA=null, DETF={cams:{C05:1,C11:1,C14:1}, minDur:0, from:'', to:''};
 async function loadDetections(){
   DETS_LOADED = true;
   if (DAY){ $('#dets').innerHTML = '<p class="hint">All-Detections is per-hour — pick a specific hour in the dropdown to resolve detections.</p>'; return; }
@@ -332,9 +332,12 @@ async function loadDetections(){
 }
 function toggleCam(c){ DETF.cams[c]=DETF.cams[c]?0:1; renderDets(); }
 function setMinDur(v){ DETF.minDur=parseFloat(v)||0; renderDets(); }
+function setTimeF(which,v){ DETF[which]=v||''; renderDets(); }
+function clearTimeF(){ DETF.from=DETF.to=''; renderDets(); }
 function renderDets(){
   const r=DETDATA; if(!r) return;
-  const keep = a => (a||[]).filter(d=>DETF.cams[d.camera] && (d.dur_s||0)>=DETF.minDur);
+  const inT = ist => { const t=(ist||'').slice(0,5); return (!DETF.from || t>=DETF.from) && (!DETF.to || t<=DETF.to); };
+  const keep = a => (a||[]).filter(d=>DETF.cams[d.camera] && (d.dur_s||0)>=DETF.minDur && inT(d.ist));
   const card = d => {
     const a = d.annotation;
     const badge = a ? `<div class="adone">✓ ${ALLOC[a]||a}</div>` : '';
@@ -347,13 +350,16 @@ function renderDets(){
     return `<div class="ev dcard ${a?'resolved':''}">${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}</div>${badge}${menu}</div>`;
   };
   const door=keep(r.door), inside=keep(r.inside), acc=keep(r.accounted), st=keep(r.street);
+  const shown = door.length+inside.length+acc.length+st.length;
   const grp = (icon,title,arr,note,open) => `<div class="dgrp ${open?'open':''}"><div class="ddhead" onclick="this.closest('.dgrp').classList.toggle('open')"><b>${icon} ${title} · ${arr.length}</b> <span class="hint">${note}</span></div><div class="dbody"><div class="mini">${arr.map(card).join('')||'<p class="empty">none</p>'}</div></div></div>`;
   $('#detsHead').textContent = `All detections — reconciliation: did we miss anyone? · ${r.total} total`;
   const prog = r.total ? Math.round(100*(r.resolved||0)/r.total) : 0;
   $('#dets').innerHTML =
     `<div class="prog"><b>Closing the day</b> — ${r.resolved||0} / ${r.total} resolved<div class="pbar"><i style="width:${prog}%"></i></div></div>
      <div class="detf">filter: ${['C05','C11','C14'].map(c=>`<label><input type="checkbox" ${DETF.cams[c]?'checked':''} onchange="toggleCam('${c}')"> ${c}</label>`).join(' ')}
-       &nbsp;·&nbsp; hide &lt; <input type="number" value="${DETF.minDur}" min="0" step="1" style="width:46px" onchange="setMinDur(this.value)">s</div>`
+       &nbsp;·&nbsp; hide &lt; <input type="number" value="${DETF.minDur}" min="0" step="1" style="width:46px" onchange="setMinDur(this.value)">s
+       &nbsp;·&nbsp; ⏱ <input type="time" value="${DETF.from}" step="60" style="width:104px" onchange="setTimeF('from',this.value)"> – <input type="time" value="${DETF.to}" step="60" style="width:104px" onchange="setTimeF('to',this.value)">${(DETF.from||DETF.to)?` <span style="cursor:pointer;text-decoration:underline" onclick="clearTimeF()">clear</span>`:''}
+       &nbsp;·&nbsp; <b>showing ${shown}</b> of ${r.total}</div>`
     + grp('🚪','At the door — not counted',door,'possible MISSED entries — review these',true)
     + grp('🏠','Inside — not matched to a visit',inside,'interior presence (mostly tracker fragments; raise the duration filter)',false)
     + grp('✅','Already counted',acc,'already shown in the Review tab',false)
