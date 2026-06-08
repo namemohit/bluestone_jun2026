@@ -225,6 +225,10 @@ def label(body: dict) -> dict:
     emp_id = body.get("employee_id")
     store.add_label(window, body.get("visit_id", ""), verdict, reason=body.get("reason", ""),
                     in_track=body.get("in_track"), out_track=body.get("out_track"), employee_id=emp_id)
+    # marking a track as staff overrides any earlier "not staff" on it (re-tag after a ✗ reject)
+    if verdict == "employee" and body.get("in_track") is not None:
+        store.add_label(window, f"notstaff-{body['in_track']}", "reset", reason="re-marked staff",
+                        in_track=body.get("in_track"))
     if verdict == "employee" and emp_id and body.get("crop"):
         _enroll_from_cache(emp_id, body["crop"], window, body.get("in_track"))  # crop embedding -> gallery
     _rerun_l4(window)  # learning: re-route matches for free, then hand back the new result
