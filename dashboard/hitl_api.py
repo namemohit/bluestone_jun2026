@@ -283,7 +283,9 @@ def detections(window: str, grouped: int = 0) -> dict:
             eid = d.get("employee_id")
             if eid:
                 d["staff_name"] = (rank.get(eid) or f"#{eid}") + (" · " + names[eid] if names.get(eid) else "")
-    order = ["to_review", "customer", "staff", "passby", "not_person", "duplicate", "inside", "on_hold"]
+    # display order (user-chosen): accounted people first, then already-counted, noise, then the work queue last.
+    # 'inside' sits next to 'duplicate' — both mean "already counted at the door" (confirming inside writes duplicate).
+    order = ["customer", "staff", "on_hold", "duplicate", "inside", "not_person", "passby", "to_review"]
     buckets: dict = {k: [] for k in order}
     for d in dets:
         buckets.setdefault(d.get("determination", "to_review"), []).append(d)
