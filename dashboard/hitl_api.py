@@ -750,17 +750,32 @@ def unstaff_track(body: dict) -> dict:
     return visits(window)
 
 
-def _emb_for_crop(crop):
-    """OSNet embedding for a crop pulled from the L4 cache (no GPU); None if absent."""
-    import pickle
-    if not crop or not os.path.exists("outputs/osnet_emb_cache.pkl"):
-        return None
+_EMB_CACHE = {"data": None, "mtime": None}   # the OSNet emb map, loaded ONCE (mtime-invalidated)
+
+
+def _load_emb_cache() -> dict:
+    """Load + normalise outputs/osnet_emb_cache.pkl once, cached by mtime. It's MBs — re-reading + re-normalising
+    it on every /allocate is what made staff assignment slow (twice per call: emb + enroll)."""
+    p = "outputs/osnet_emb_cache.pkl"
     try:
-        with open("outputs/osnet_emb_cache.pkl", "rb") as f:
-            cache = pickle.load(f)
+        mt = os.path.getmtime(p)
     except Exception:
-        return None
-    return {str(k).replace("\\", "/"): v for k, v in cache.items()}.get(str(crop).replace("\\", "/"))
+        return {}
+    if mt != _EMB_CACHE["mtime"]:
+        import pickle
+        try:
+            with open(p, "rb") as f:
+                raw = pickle.load(f)
+            _EMB_CACHE["data"] = {str(k).replace("\\", "/"): v for k, v in raw.items()}
+        except Exception:
+            _EMB_CACHE["data"] = {}
+        _EMB_CACHE["mtime"] = mt
+    return _EMB_CACHE["data"] or {}
+
+
+def _emb_for_crop(crop):
+    """OSNet embedding for a crop from the cached L4 emb map (no GPU); None if absent."""
+    return _load_emb_cache().get(str(crop).replace("\\", "/")) if crop else None
 
 
 # ===== training: gallery + threshold rebuild (learning-free, no GPU) ===============
@@ -1064,18 +1079,8 @@ def park(body: dict) -> dict:
 
 
 def _enroll_from_cache(employee_id, crop, window, track):
-    """Pull the marked crop's OSNet embedding from the L4 cache (no GPU) and add it to the gallery."""
-    import pickle
-    cache_path = "outputs/osnet_emb_cache.pkl"
-    if not os.path.exists(cache_path):
-        return
-    try:
-        with open(cache_path, "rb") as f:
-            cache = pickle.load(f)
-    except Exception:
-        return
-    norm = {str(k).replace("\\", "/"): v for k, v in cache.items()}  # cache keys are mixed-separator
-    emb = norm.get(str(crop).replace("\\", "/"))
+    """Add the marked crop's OSNet embedding (from the cached L4 emb map, no GPU) to the gallery."""
+    emb = _load_emb_cache().get(str(crop).replace("\\", "/"))
     if emb is not None:
         try:
             store.enroll_staff(employee_id, "s14", emb, crop_url=crop, window=window, track=track)
