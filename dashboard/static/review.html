@@ -233,12 +233,12 @@
   <div id="tab-review">
   <div id="reconLine" class="reconline"></div>
 
-  <details class="rsec" open>
+  <details class="rsec" data-persist="sec-report" open>
     <summary class="rsechead">📊 Report for the period</summary>
     <div class="rsecbody"><div id="hourreport"></div></div>
   </details>
 
-  <details class="rsec" open>
+  <details class="rsec" data-persist="sec-e2" open>
     <summary class="rsechead">🚪 E2 Tracker — entry → exit journeys <span class="hint">(customers + staff · = the All-Detections groups, 1:1)</span></summary>
     <div class="rsecbody">
       <div id="e2journeys"></div>
@@ -248,23 +248,23 @@
         <button class="ok" onclick="doLink()">Link as one visit ✓</button>
         <button onclick="clearSel()">Cancel</button>
       </div>
-      <details class="subblk" open>
+      <details class="subblk" data-persist="e2-staff" open>
         <summary>👥 Staff this window <span class="hint">— each #S, in → out · hidden from customer counts · ✋/🤖</span></summary>
         <div class="mini staffrow" id="staff"></div>
       </details>
-      <details class="subblk">
+      <details class="subblk" data-persist="e2-entries">
         <summary>🚪 Entries — everyone who crossed the door, by time (L2)</summary>
         <div class="mini" id="entries"></div>
       </details>
-      <details class="subblk">
+      <details class="subblk" data-persist="e2-visits">
         <summary>🔗 Visits — matched entry → exit (L4) · review the uncertain ones first</summary>
         <div id="visits"></div>
       </details>
-      <details class="subblk">
+      <details class="subblk" data-persist="e2-open">
         <summary>⏱ Still inside at window end</summary>
         <div class="mini" id="open"></div>
       </details>
-      <details class="subblk">
+      <details class="subblk" data-persist="e2-pre">
         <summary>↩ Exited but entered before the window</summary>
         <div class="mini" id="pre"></div>
         <p class="hint" style="margin-top:8px">Tip: click one “still inside” + one “pre-window exit” to link them into a recovered visit. Every action can be undone.</p>
@@ -272,7 +272,7 @@
     </div>
   </details>
 
-  <details class="rsec" open>
+  <details class="rsec" data-persist="sec-dets" open>
     <summary class="rsechead">🔍 All Detections — reconcile · did we miss anyone?</summary>
     <div class="rsecbody">
       <h2 id="detsHead">🔍 Reconcile — all detections · did we miss anyone? (L1)</h2>
@@ -307,6 +307,11 @@ const cropURL = p => `/api/hitl/crop?path=${encodeURIComponent(p)}`;
 const LS = { get(k,d){ try{ const v=localStorage.getItem('bs.'+k); return v==null?d:JSON.parse(v); }catch(e){ return d; } },
              set(k,v){ try{ localStorage.setItem('bs.'+k, JSON.stringify(v)); }catch(e){} } };
 let WIN = LS.get('win', null), sel = {open:null, pre:null}, RO = false, HIDE = false, DAY = false, TAB_RESTORED = false;
+// --- view persistence: the chosen window (above), every open section, and scroll position survive a refresh of /review ---
+document.addEventListener('toggle', e=>{ const k=e.target&&e.target.dataset&&e.target.dataset.persist; if(k) LS.set('o.'+k, e.target.open); }, true);   // toggle doesn't bubble -> capture
+function restoreOpen(root){ (root||document).querySelectorAll('details[data-persist]').forEach(d=>{ const v=LS.get('o.'+d.dataset.persist,null); if(v!=null && v!==d.open) d.open=v; }); }
+addEventListener('beforeunload', ()=>LS.set('scrollY', Math.round(window.scrollY||0)));
+function restoreScroll(){ const y=LS.get('scrollY',0); if(y) [450,1000].forEach(ms=>setTimeout(()=>window.scrollTo(0,y), ms)); }   // retry: content loads async
 // faces are hidden only when the server says so (unprotected public view); a password unhides them
 const cropImg = p => HIDE ? '<div class="nocrop" title="face hidden on this view">👤</div>' : `<img src="${cropURL(p)}" onclick="event.stopPropagation();zoom('${p}')" style="cursor:zoom-in" title="click to enlarge">`;
 function pidTag(d){   // anchor chips: S# (staff daily rank), C# (customer by arrival) + G# (arrival group) — same tags everywhere
@@ -613,7 +618,7 @@ async function doRerun(){
     <div class="chips" style="margin-top:6px">${cell('customers','customers')} ${cell('auto_staff','auto-staff')} ${cell('entries','door entries')} ${cell('visits','matched')}</div></div>`;
 }
 let DETS_LOADED=false, DETALL=null, DETMETA=null, DIRTY_WINS=new Set(), DETF=LS.get('detf', {cams:{C05:1,C11:1,C14:1}, minDur:0, minW:0, minH:0, from:'', to:''});
-let DOPEN=new Set();   // which buckets are expanded; in-memory only -> every refresh starts all-folded, and a re-render (e.g. ticking a crop) keeps your current view instead of snapping back to To-review
+let DOPEN=new Set(LS.get('dopen',[]));   // which All-Detections buckets are expanded — persisted across refreshes
 async function loadDetections(){
   DETS_LOADED = true;
   $('#dets').innerHTML = '<p class="hint">loading…</p>';
@@ -638,6 +643,7 @@ function setMinH(v){ DETF.minH=parseInt(v)||0; LS.set('detf',DETF); renderDets()
 function toggleGrp(k, head){   // lazy-render: build this bucket's cards on expand, clear on collapse
   const opening = !DOPEN.has(k);
   opening ? DOPEN.add(k) : DOPEN.delete(k);
+  LS.set('dopen', [...DOPEN]);             // remember the expanded buckets across refreshes
   const g = head.closest('.dgrp'); g.classList.toggle('open', opening);
   const mini = g.querySelector('.mini');
   if (mini) mini.innerHTML = opening ? buildBucketCards(k) : '';
@@ -731,10 +737,11 @@ function renderStaff(){
         const x=(RO||DAY)?'':`<button class="xtrack" title="not staff — back to review" onclick="event.stopPropagation();unstaffTrack(${c.track})">✗</button>`;
         return `<figure>${grThumb(c.crop)}<figcaption>${c.camera} ${c.ist||''}<br>#${c.track} ${name}${x}</figcaption></figure>`;
       }).join('');
-      return `<details class="subblk staffcard">
+      return `<details class="subblk staffcard" data-persist="staff-${g.pid}">
         <summary>${stThumb(g.best_crop)} <span class="pidbadge staff">#${g.pid}</span> <b>${lab}</b> · ${g.n_sightings} sighting${g.n_sightings!==1?'s':''} <span class="hint">— ${fvsum}</span></summary>
         ${fvDetail}<div class="sgrp">${grid}</div><div style="margin-top:8px">${actions}</div></details>`;
     }).join('') || '<p class="empty">no staff this period</p>';
+  restoreOpen($('#staff'));                  // re-apply each staff card's open/closed state after re-render
 }
 async function unstaffMany(s){ for(const t of String(s).split('|').filter(Boolean)) await unstaffTrack(parseInt(t)); }
 function renderStaffLegacy(d){   // enrolled-only staff render (cloud read-only fallback when det=staff crops aren't available)
@@ -972,7 +979,9 @@ function showToast(msg, undoFn){
 function hideToast(){ $('#toast').classList.remove('show'); }
 function undoLast(){ if(lastUndo) lastUndo(); }
 
-loadWindows();
+restoreOpen();      // restore the static section twirls (they're already in the DOM)
+loadWindows();      // restores the last window + tab; renderStaff/renderDets re-apply their own open state
+restoreScroll();    // and the scroll position
 </script>
 </body>
 </html>
