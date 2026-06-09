@@ -715,15 +715,13 @@ function renderStaff(){
       const nAuto = (g.auto_tracks||[]).length;
       const att = g.employee_id ? ATT[g.employee_id] : null;
       const inout = att ? ` &nbsp; <span style="color:var(--ink)">🕒 ${att.in} → ${att.out}</span>` : '';   // attendance for the selected period, merged in
-      const act = (RO||DAY) ? '' : (g.employee_id ? `<button onclick="renameStaff(${g.employee_id})">✎ name</button> ` : '')
+      const act = (RO||DAY) ? '' : (g.employee_id ? `<button onclick="renameStaff(${g.employee_id})">✎ name</button> <button onclick="openMatches(${g.employee_id})" title="see + confirm EVERY sighting of this person across the whole day (other timestamps)">🔍 all-day sightings</button> ` : '')
                           + `<button onclick="unstaffGroup('${(g.visit_ids||[]).join('|')}')">↩ not staff</button>`;
       const imgs = (g.crops||[]).map(c=>{
         const pick = `openStaffPicker('open-${c.track}',${c.track},'${c.crop}',null,'${WIN}')`;
         const name = (RO||DAY||g.employee_id)?'':`<button class="xtrack" title="assign this staffer a name" onclick="event.stopPropagation();${pick}">👤</button>`;
         const x = (RO||DAY)?'':`<button class="xtrack" title="not staff — back to review" onclick="event.stopPropagation();unstaffTrack(${c.track})">✗</button>`;
-        const clk = g.employee_id ? `openMatches(${g.employee_id})` : pick;
-        const ttl = g.employee_id ? 'click to see + confirm ALL matches for this person' : 'click to assign this staffer a name';
-        const img = (HIDE||!c.crop)?'<div class="nocrop">👤</div>':`<img src="${cropURL(c.crop)}" onclick="event.stopPropagation();${clk}" style="cursor:pointer" title="${ttl}">`;
+        const img = (HIDE||!c.crop)?'<div class="nocrop">👤</div>':`<img src="${cropURL(c.crop)}" onclick="event.stopPropagation();zoom('${c.crop}')" style="cursor:zoom-in" title="enlarge this crop">`;   // click = THIS crop only; cross-day matches moved to the 🔍 button
         const sp = g.pid ? `<span class="pidbadge staff">#${g.pid}</span>` : '';
         return `<figure>${img}<figcaption>#${c.track} ${c.auto?'🤖':'✋'}${sp}${name}${x}</figcaption></figure>`;
       }).join('');
