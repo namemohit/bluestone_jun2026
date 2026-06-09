@@ -481,6 +481,10 @@ def _classify_detections(window: str, with_dims: bool = True, tags: dict | None 
             staff_emp[("C05", l["in_track"])] = l.get("employee_id")
 
     ann = {(a["camera"], a["track"]): a for a in store.latest_annotations(window)}  # human allocations
+    for (cam, tk), a in ann.items():                           # camera-aware staff: an annotated staffer (ANY camera, incl. interior C11/C14)
+        if a.get("category") == "staff" and a.get("employee_id") and tk not in not_staff:   # with an id -> resolve to #S, not 'S?'
+            accounted.add((cam, tk))
+            staff_emp[(cam, tk)] = a["employee_id"]
     parked = _parked_set(window)                                                    # held for later review
     dirs = [(wcfg.get("l1"), "C05")] + [(d, Path(d).name.replace("L1_", "")) for d in wcfg.get("interior", [])]
     out = []

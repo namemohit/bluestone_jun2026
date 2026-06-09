@@ -727,7 +727,7 @@ function renderStaff(){
           ? `<button onclick="renameStaff(${g.employee_id})">✎ name</button> <button onclick="openMatches(${g.employee_id})" title="every sighting of this person across the whole day">🔍 all-day sightings</button> <button onclick="unstaffMany('${(g.crops||[]).map(c=>c.track).join('|')}')">↩ not staff</button>`
           : `<span class="hint">⚠ unassigned — click 👤 on a crop to give them a name</span>`);
       const grid = (g.crops||[]).map(c=>{
-        const name=(RO||DAY||g.employee_id)?'':`<button class="xtrack" title="assign a name" onclick="event.stopPropagation();openStaffPicker('open-${c.track}',${c.track},'${c.crop}',null,'${c.window||WIN}')">👤</button>`;
+        const name=(RO||DAY||g.employee_id)?'':`<button class="xtrack" title="assign a name" onclick="event.stopPropagation();openStaffPicker('open-${c.track}',${c.track},'${c.crop}','${c.camera}','${c.window||WIN}')">👤</button>`;   // pass the CAMERA -> camera-aware /allocate (interior crops no longer hit the C05 track of the same number)
         const x=(RO||DAY)?'':`<button class="xtrack" title="not staff — back to review" onclick="event.stopPropagation();unstaffTrack(${c.track})">✗</button>`;
         return `<figure>${grThumb(c.crop)}<figcaption>${c.camera} ${c.ist||''}<br>#${c.track} ${name}${x}</figcaption></figure>`;
       }).join('');
