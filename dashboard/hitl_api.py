@@ -131,6 +131,7 @@ def visits(window: str) -> dict:
 
     def _grp(eid):
         return groups.setdefault(eid, {"employee_id": eid, "code": _label(eid),
+                                       "pid": (f"S{rank[eid]}" if eid in rank else None),   # daily S# rank
                                        "name": (emp_map.get(eid) or {}).get("name"),
                                        "tracks": [], "visit_ids": [], "auto_tracks": []})
 
@@ -321,10 +322,11 @@ def detections_day(date: str) -> dict:
         raise HTTPException(400, "bad date")
     import glob
     windows = sorted({Path(p).parent.name for p in glob.glob(f"outputs/{date}_*/visits.json")})
+    tags = _daily_tags(date)                                          # compute the day-global C#/G#/S# numbering ONCE
     all_dets: list = []
     for win in windows:
         try:
-            all_dets += _classify_detections(win, with_dims=False)   # skip crop-header reads -> fast day load (size filter is a per-hour tool)
+            all_dets += _classify_detections(win, with_dims=False, tags=tags)   # skip crop-header reads -> fast day load
         except Exception:
             continue
     return _grouped_detections(all_dets)
@@ -364,7 +366,39 @@ def _crop_dims(crop: str):
     return _CROP_DIM[crop]
 
 
-def _classify_detections(window: str, with_dims: bool = True) -> list:
+def _daily_tags(date: str) -> dict:
+    """Day-global DISPLAY numbering (recomputed per request, passed down once): customers C1..n by arrival
+    time across the whole day, their arrival group G1..n, and staff S1..n by enrollment rank. Reuses the
+    report's machinery (_confirmed_entries + group_sessions) so #C count == report footfall and #G == the
+    report's groups. Returns {cust:{(win,track):n}, grp:{(win,track):gid}, staff:{employee_id:rank}}."""
+    import glob
+    from types import SimpleNamespace
+    from logic.grouping import group_sessions
+
+    def secs(t):
+        try:
+            h, m, s = map(int, str(t).split(":"))
+            return h * 3600 + m * 60 + s
+        except Exception:
+            return 0
+    windows = sorted({Path(p).parent.name for p in glob.glob(f"outputs/{date}_*/visits.json")})
+    entries = []
+    for win in windows:
+        try:
+            entries += _confirmed_entries(win)[0]
+        except Exception:
+            pass
+    entries.sort(key=lambda e: secs(e["ist"]))                  # arrival order across the whole day -> C1..Cn
+    cust = {(e["window"], e["track"]): i + 1 for i, e in enumerate(entries)}
+    sess = [SimpleNamespace(is_employee=False, entry_ts=secs(e["ist"]), session_id=i)
+            for i, e in enumerate(entries)]
+    gmap = group_sessions(sess)[0] if sess else {}              # {session_id -> group_id(1..n)} by arrival cluster
+    grp = {(e["window"], e["track"]): gmap.get(i) for i, e in enumerate(entries)}
+    staff = {e["id"]: i + 1 for i, e in enumerate(sorted(store.list_employees(), key=lambda x: x["id"]))}
+    return {"cust": cust, "grp": grp, "staff": staff}
+
+
+def _classify_detections(window: str, with_dims: bool = True, tags: dict | None = None) -> list:
     """Tag each L1 detection by disposition. Reads the local tracks.json (which keeps the full traj),
     the zone config, and visits.json + labels to build the 'already accounted for' track set.
       accounted -> entered/exited/visit/open/pre/staff (shown in the Review tab)
@@ -375,6 +409,7 @@ def _classify_detections(window: str, with_dims: bool = True) -> list:
     wcfg = json.loads((wdir / "window.json").read_text(encoding="utf-8"))
     cfg = json.loads(Path(wcfg["config"]).read_text(encoding="utf-8"))
     street, sfrac = cfg.get("street_mask", []), cfg.get("street_drop_frac", 0.5)
+    tags = tags or _daily_tags(window.split("_")[0])           # day-global C#/G#/S# numbering (shared by callers)
 
     def camtrack(crop):  # 'outputs/.../L1_C11/crops/trk_0035.jpg' -> ('C11', 35)
         m = re.search(r"L1_([^/\\]+)[/\\]crops[/\\]trk_(\d+)", str(crop or ""))
@@ -410,23 +445,21 @@ def _classify_detections(window: str, with_dims: bool = True) -> list:
     for l in vj.get("links", []):                               # interior auto-linked to its door entry
         accounted.add(("C05", l["in_track"]))
         accounted.add((l["cam"], l["track"]))                   # the interior track -> accounted (suggested customer)
-    cust_pid = {}                                               # (cam,track) -> "C{in_track}" — per-visit customer tag (THIS window only)
+    cust_entry = {}                                             # (cam,track) -> the door ENTRY track that owns this crop
     for v in vj.get("visits", []):
-        pid = f"C{v['in_track']}"
-        cust_pid[("C05", v["in_track"])] = pid
-        cust_pid[("C05", v["out_track"])] = pid
+        ent = v["in_track"]
+        cust_entry[("C05", v["in_track"])] = ent
+        cust_entry[("C05", v["out_track"])] = ent
         for c in (v.get("in_crop"), v.get("out_crop")):
             if camtrack(c):
-                cust_pid[camtrack(c)] = pid
+                cust_entry[camtrack(c)] = ent
     for e in vj.get("open_sessions", []) + vj.get("pre_window_exits", []):
-        pid = f"C{e['track']}"
-        cust_pid[("C05", e["track"])] = pid
+        cust_entry[("C05", e["track"])] = e["track"]
         if camtrack(e.get("crop")):
-            cust_pid[camtrack(e.get("crop"))] = pid
+            cust_entry[camtrack(e.get("crop"))] = e["track"]
     for l in vj.get("links", []):
-        pid = f"C{l['in_track']}"
-        cust_pid[("C05", l["in_track"])] = pid
-        cust_pid[(l["cam"], l["track"])] = pid
+        cust_entry[("C05", l["in_track"])] = l["in_track"]
+        cust_entry[(l["cam"], l["track"])] = l["in_track"]
     labels = store.get_labels(window)
     not_staff = {l["in_track"] for l in labels
                  if str(l.get("visit_id", "")).startswith("notstaff-") and l.get("verdict") == "reject"
@@ -481,13 +514,24 @@ def _classify_detections(window: str, with_dims: bool = True) -> list:
                 det = ann_cat if conf else sugg
             cropr = (t.get("crop", "") or "").replace("\\", "/")
             cw, ch = _crop_dims(cropr) if with_dims else (None, None)   # day view skips per-crop header reads
-            pid = f"S{staff_emp[key]}" if staff_emp.get(key) else cust_pid.get(key)   # stable #S{id} for staff, else per-visit #C{entry}
+            pid, group = None, None                            # day-global tags: S{rank} staff, C{arrival} customer, G{group}
+            if staff_emp.get(key):
+                pid = f"S{tags['staff'].get(staff_emp[key], staff_emp[key])}"
+            else:
+                ent = cust_entry.get(key)
+                if ent is None and cam == "C05":
+                    ent = t["track"]                       # a C05 door track may itself be a confirmed entry (human-added missed customer)
+                n = tags["cust"].get((window, ent)) if ent is not None else None
+                if n:
+                    pid = f"C{n}"
+                    g = tags["grp"].get((window, ent))
+                    group = f"G{g}" if g else None
             out.append({"camera": cam, "track": t["track"], "window": window, "ist": t.get("first_ist"), "dur_s": dur,
                         "crop": cropr, "crop_w": cw, "crop_h": ch,
                         "disposition": disp, "staff": key in staff_emp, "annotation": ann_cat,
                         "parked": key in parked, "suggested": sugg, "confirmed": conf,
                         "determination": det, "employee_id": staff_emp.get(key),
-                        "pid": pid, "weak_staff": key in weak_staff})
+                        "pid": pid, "group": group, "weak_staff": key in weak_staff})
     return out
 
 
@@ -1013,6 +1057,8 @@ def staff_matches(employee_id: int) -> dict:
     """Every sighting grouped to one staffer across the day (manual + auto) for human confirmation."""
     out = store.staff_matches(employee_id)
     out["code"] = _rank_labels().get(employee_id, f"S{employee_id}")
+    rank = {e["id"]: i + 1 for i, e in enumerate(sorted(store.list_employees(), key=lambda x: x["id"]))}
+    out["pid"] = f"S{rank.get(employee_id, employee_id)}"             # daily S# rank for the card title
     return out
 
 
@@ -1031,7 +1077,8 @@ def _confirmed_entries(window):
         auto[v["in_track"]] = v["in_ist"]
     for e in data.get("open_sessions", []):
         auto[e["track"]] = e["ist"]
-    extra = [t for t, c in ann.items() if c == "customer" and t not in auto]   # human-added missed
+    out_tracks = {v["out_track"] for v in data.get("visits", [])}              # the EXIT of a counted visit...
+    extra = [t for t, c in ann.items() if c == "customer" and t not in auto and t not in out_tracks]   # ...isn't a new customer (no double-count)
     det_ist = {d["track"]: d["ist"] for d in store.get_detections(window)
                if d.get("camera") == "C05"} if extra else {}
     entries = [{"window": window, "track": t, "ist": ist} for t, ist in auto.items()
@@ -1166,9 +1213,11 @@ def _day_report(date: str, windows=None) -> dict:
     entries.sort(key=lambda e: secs(e["ist"]))
     sess = [SimpleNamespace(is_employee=False, entry_ts=secs(e["ist"]), session_id=i)
             for i, e in enumerate(entries)]
-    groups = group_sessions(sess, group_gap_sec=15.0)[1] if sess else []
+    _gres = group_sessions(sess, group_gap_sec=15.0) if sess else ({}, [])
+    gmap, groups = _gres[0], _gres[1]              # gmap: session_id -> group_id (1..n) -> the #G tag
     att = store.attendance("s14", date)
     rank = _rank_labels()
+    rank_num = {e["id"]: i + 1 for i, e in enumerate(sorted(store.list_employees(), key=lambda x: x["id"]))}
     timesheets = [{"employee": rank.get(a["id"], a.get("code")) + (" · " + a["name"] if a.get("name") else ""),
                    "check_in": a.get("first_seen"), "check_out": a.get("last_seen"),
                    "hours": a.get("windows")} for a in att if a.get("sightings")]
@@ -1176,10 +1225,11 @@ def _day_report(date: str, windows=None) -> dict:
     # ---- rich detail (ADDITIVE; the stable fields above are untouched) ----
     cinfo = {win: _entry_crop_info(win) for win in windows}
     rich = []                                                          # one per entry, aligned with sess session_ids
-    for e in entries:
-        i = cinfo.get(e["window"], {}).get(e["track"], {})
-        rich.append({"window": e["window"], "track": e["track"], "in_ist": e["ist"], "pid": f"C{e['track']}",
-                     "out_ist": i.get("out_ist"), "dwell_s": i.get("dwell_s"), "crop": i.get("crop")})
+    for idx, e in enumerate(entries):                                  # idx == sess session_id -> C#/G# alignment
+        ci = cinfo.get(e["window"], {}).get(e["track"], {})
+        rich.append({"window": e["window"], "track": e["track"], "in_ist": e["ist"],
+                     "pid": f"C{idx+1}", "group": (f"G{gmap[idx]}" if gmap.get(idx) else None),
+                     "out_ist": ci.get("out_ist"), "dwell_s": ci.get("dwell_s"), "crop": ci.get("crop")})
     customer_groups = []
     for g in groups:
         mems = sorted([rich[sid] for sid in g["session_ids"]], key=lambda m: secs(m["in_ist"]))
@@ -1233,7 +1283,8 @@ def _day_report(date: str, windows=None) -> dict:
         times = [t for t in times if t]
         fi, lo = (min(times), max(times)) if times else (None, None)
         span = (secs(lo) - secs(fi)) if (fi and lo) else 0
-        staff_detail.append({"employee_id": a["id"], "code": rank.get(a["id"], a.get("code")), "name": a.get("name"),
+        staff_detail.append({"employee_id": a["id"], "pid": f"S{rank_num.get(a['id'], a['id'])}",
+                             "code": rank.get(a["id"], a.get("code")), "name": a.get("name"),
                              "crop": gal.get(a["id"]) or next((t["crop"] for t in tl if t.get("crop")), None),
                              "first_in": fi, "last_out": lo,
                              "span_min": round(span / 60, 1), "total_dwell_min": round(total / 60, 1),
