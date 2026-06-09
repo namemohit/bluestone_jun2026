@@ -172,6 +172,20 @@
   .gthumb.nocrop { display:inline-flex; align-items:center; justify-content:center; background:#2a323d; font-size:24px; }
   .demo { font-size:10px; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:0 5px; display:inline-block; margin:3px 0; letter-spacing:.02em; }
   .inside-now { color:var(--warn); font-weight:600; }
+  /* 3-part review layout */
+  .reconline { font-size:12px; color:var(--dim); background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 13px; margin-bottom:14px; }
+  .rsec { border:1px solid var(--line); border-radius:12px; margin-bottom:16px; background:var(--card); overflow:hidden; }
+  .rsec > .rsechead { cursor:pointer; padding:13px 16px; font-size:15px; font-weight:650; color:var(--ink); list-style:none; user-select:none; background:var(--bg); }
+  .rsec[open] > .rsechead { border-bottom:1px solid var(--line); }
+  .rsec > .rsechead::-webkit-details-marker { display:none; }
+  .rsec > .rsechead::before { content:'\25B8'; color:var(--accent); margin-right:9px; display:inline-block; transition:transform .15s; }
+  .rsec[open] > .rsechead::before { transform:rotate(90deg); }
+  .rsecbody { padding:14px 16px; }
+  .subblk { margin:12px 0; border:1px solid var(--line); border-radius:9px; padding:2px 12px 8px; }
+  .subblk > summary { cursor:pointer; font-size:12px; color:var(--dim); user-select:none; padding:8px 0; }
+  .e2row { display:flex; gap:12px; flex-wrap:wrap; }
+  .e2cell { margin:0; text-align:center; width:96px; }
+  .e2cell figcaption { font-size:10px; color:var(--dim); margin-top:4px; line-height:1.4; }
   .stafflist { display:flex; flex-direction:column; gap:12px; }
   .scard { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
   .shead { display:flex; align-items:center; gap:12px; margin-bottom:10px; } .sthumb { height:72px; width:54px; object-fit:cover; border-radius:7px; } .sthumb.nocrop { display:inline-flex; align-items:center; justify-content:center; background:#2a323d; font-size:22px; }
@@ -214,27 +228,54 @@
     <button class="tab" onclick="showTab('train',this)">🧠 Training</button>
   </div>
   <div id="tab-review">
-  <div id="hourreport"></div>
-  <div class="tfbar" style="display:none">⏱ time slice: <input type="time" id="tfrom" step="60" onchange="setTimeF('from',this.value)"> – <input type="time" id="tto" step="60" onchange="setTimeF('to',this.value)"> <span id="tfclear"></span><span class="hint" style="margin-left:auto">narrow the whole-day results to a sub-range (a single hour is already its own slice)</span></div>
-  <div id="linkbar" class="linkbar">
-    <span>Linking: <b id="linkInfo"></b></span>
-    <button class="ok" onclick="doLink()">Link as one visit ✓</button>
-    <button onclick="clearSel()">Cancel</button>
-  </div>
-  <h2>Entries — everyone who crossed the door, by time (L2)</h2>
-  <div class="mini" id="entries"></div>
-  <h2>Visits — matched entry→exit (L4) · review the uncertain ones first</h2>
-  <div id="visits"></div>
-  <h2>Still inside at window end</h2>
-  <div class="mini" id="open"></div>
-  <h2>Exited but entered before the window</h2>
-  <div class="mini" id="pre"></div>
-  <h2>Staff this window — sightings + 🕒 check-in/out for the selected period · hidden from customer counts · ✋ marked or 🤖 auto-recognised (↩ to undo)</h2>
-  <div class="mini staffrow" id="staff"></div>
-  <p class="hint" style="margin-top:24px">Tip: click one “still inside” + one “pre-window exit” to link them into a recovered visit. Every action can be undone.</p>
-  <hr class="divider">
-  <h2 id="detsHead">🔍 Reconcile — all detections · did we miss anyone? (L1)</h2>
-  <div id="dets"><p class="hint">loading…</p></div>
+  <div id="reconLine" class="reconline"></div>
+
+  <details class="rsec" open>
+    <summary class="rsechead">📊 Report for the period</summary>
+    <div class="rsecbody"><div id="hourreport"></div></div>
+  </details>
+
+  <details class="rsec" open>
+    <summary class="rsechead">🚪 E2 Tracker — entry → exit journeys <span class="hint">(customers + staff · = the All-Detections groups, 1:1)</span></summary>
+    <div class="rsecbody">
+      <div id="e2journeys"></div>
+      <div class="tfbar" style="display:none">⏱ time slice: <input type="time" id="tfrom" step="60" onchange="setTimeF('from',this.value)"> – <input type="time" id="tto" step="60" onchange="setTimeF('to',this.value)"> <span id="tfclear"></span><span class="hint" style="margin-left:auto">narrow the whole-day results to a sub-range (a single hour is already its own slice)</span></div>
+      <div id="linkbar" class="linkbar">
+        <span>Linking: <b id="linkInfo"></b></span>
+        <button class="ok" onclick="doLink()">Link as one visit ✓</button>
+        <button onclick="clearSel()">Cancel</button>
+      </div>
+      <details class="subblk" open>
+        <summary>👥 Staff this window <span class="hint">— each #S, in → out · hidden from customer counts · ✋/🤖</span></summary>
+        <div class="mini staffrow" id="staff"></div>
+      </details>
+      <details class="subblk">
+        <summary>🚪 Entries — everyone who crossed the door, by time (L2)</summary>
+        <div class="mini" id="entries"></div>
+      </details>
+      <details class="subblk">
+        <summary>🔗 Visits — matched entry → exit (L4) · review the uncertain ones first</summary>
+        <div id="visits"></div>
+      </details>
+      <details class="subblk">
+        <summary>⏱ Still inside at window end</summary>
+        <div class="mini" id="open"></div>
+      </details>
+      <details class="subblk">
+        <summary>↩ Exited but entered before the window</summary>
+        <div class="mini" id="pre"></div>
+        <p class="hint" style="margin-top:8px">Tip: click one “still inside” + one “pre-window exit” to link them into a recovered visit. Every action can be undone.</p>
+      </details>
+    </div>
+  </details>
+
+  <details class="rsec" open>
+    <summary class="rsechead">🔍 All Detections — reconcile · did we miss anyone?</summary>
+    <div class="rsecbody">
+      <h2 id="detsHead">🔍 Reconcile — all detections · did we miss anyone? (L1)</h2>
+      <div id="dets"><p class="hint">loading…</p></div>
+    </div>
+  </details>
   </div><!-- /tab-review -->
   <div id="tab-report" style="display:none"><div id="report"></div></div>
   <div id="tab-train" style="display:none"><div id="train"></div></div>
@@ -427,6 +468,28 @@ async function loadHourReport(){   // the SAME report pinned to the top of revie
                       : (RO?'':`<button class="ok" onclick="doPublish('${reqWin}','hour')">✓ Accept this hour</button>`);
   box.innerHTML = `<div class="hourrep"><div class="rephead"><div class="rtitle">📊 ${title}</div><div class="rbtns">${acts}</div></div>
     <div id="pubmsg"></div>${reportHTML(r)}</div>`;
+  renderE2(r);
+}
+let REC = {custReport:null, custE2:null, custDet:null, staffDet:null, staffUn:null};   // three-way customer/staff reconciliation
+function updateReconLine(){
+  const el=$('#reconLine'); if(!el) return;
+  const f=v=>v==null?'…':v;
+  const cAgree = REC.custReport!=null && REC.custDet!=null && REC.custReport===REC.custE2 && REC.custE2===REC.custDet;
+  const cTag = REC.custDet!=null ? (cAgree?' <span style="color:var(--ok)">✓ match</span>':' <span style="color:var(--warn)">⚠ mismatch</span>') : '';
+  let s = `🧮 <b>Customers</b> &nbsp;report ${f(REC.custReport)} · E2 ${f(REC.custE2)} · All-Detections ${f(REC.custDet)}${cTag}`;
+  if (REC.staffDet!=null) s += ` &nbsp;&nbsp;|&nbsp;&nbsp; <b>Staff</b> ${REC.staffDet}` + (REC.staffUn?` <span style="color:var(--warn)">· ${REC.staffUn} unassigned (S?) — name them</span>`:'');
+  el.innerHTML = s;
+}
+function renderE2(r){                                                                  // the whole Customer group, as entry→exit journeys
+  const el=$('#e2journeys'); if(!el) return;
+  const mins=s=>s?Math.round(s/60)+'m':'—';
+  const th=c=>(c&&!HIDE)?`<img src="${cropURL(c)}" class="gthumb" style="cursor:zoom-in" onclick="zoom('${c}')">`:'<div class="gthumb nocrop">👤</div>';
+  const mems=((r&&r.customer_groups)||[]).flatMap(g=>g.members||[]).slice().sort((a,b)=>String(a.in_ist||'').localeCompare(String(b.in_ist||'')));
+  el.innerHTML = `<div class="hint" style="margin-bottom:8px">🛍️ ${mems.length} customer${mems.length===1?'':'s'} · entry → exit journeys (every #C in the All-Detections customer group)</div>
+    <div class="e2row">${mems.map(m=>`<figure class="e2cell">${th(m.crop)}<figcaption>${m.pid?`<span class="pidbadge cust">#${m.pid}</span>`:''}${m.group?`<span class="pidbadge grp">#${m.group}</span>`:''}${m.demo?`<div class="demo">${m.demo}</div>`:''}<div><b>${m.in_ist||'—'}</b>${m.out_ist?` → ${m.out_ist}`:''}</div><span class="${m.dwell_s?'hint':'inside-now'}">${m.dwell_s?mins(m.dwell_s)+' dwell':'⏱ still inside'}</span></figcaption></figure>`).join('')||'<p class="empty">no customers this period</p>'}</div>`;
+  REC.custReport = (r&&r.customers&&r.customers.unique_customers!=null)?r.customers.unique_customers:mems.length;
+  REC.custE2 = mems.length;
+  updateReconLine();
 }
 async function loadReport(){
   const date = (WIN||'').split('_')[0] || '';
@@ -557,6 +620,11 @@ async function loadDetections(){
   if (!r.grouped){ $('#dets').innerHTML = (r.detections||[]).map(detHTML).join('')||'<p class="empty">none</p>'; return; }
   DETALL = []; (r.order||[]).forEach(k=>(r.buckets[k]||[]).forEach(d=>DETALL.push(d)));   // flat cache; each detection carries its source window
   DETMETA = {order:r.order, total:r.total};
+  const staffD = (DETALL||[]).filter(d=>d.determination==='staff'&&d.pid);   // All-Detections #C/#S sets for the reconciliation line
+  REC.custDet = new Set((DETALL||[]).filter(d=>d.determination==='customer'&&d.pid).map(d=>d.pid)).size;
+  REC.staffDet = new Set(staffD.filter(d=>d.pid!=='S?').map(d=>d.pid)).size;
+  REC.staffUn = staffD.filter(d=>d.pid==='S?').length;
+  if (typeof updateReconLine==='function') updateReconLine();
   renderDets();
 }
 function inTimeRange(ist){ if (!DAY) return true; const t=(ist||'').slice(0,5); return (!DETF.from || t>=DETF.from) && (!DETF.to || t<=DETF.to); }  // only the whole-day view slices by time; a single hour is already a slice

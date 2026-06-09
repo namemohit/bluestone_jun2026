@@ -499,42 +499,55 @@ def _classify_detections(window: str, with_dims: bool = True, tags: dict | None 
                 disp = "inside"     # interior, not matched to a visit -> who was in the store
             dur = round(t.get("last_ts", 0) - t.get("first_ts", 0), 1)
             ann_cat = (ann.get(key) or {}).get("category")
-            if key in parked:                                     # held -> on_hold (a decision auto-unparks)
-                sugg, conf, det = "on_hold", False, "on_hold"
+            cropr = (t.get("crop", "") or "").replace("\\", "/")
+            cw, ch = _crop_dims(cropr) if with_dims else (None, None)   # day view skips per-crop header reads
+            # --- anchored pid FIRST; the customer/staff bucket DERIVES from it (1:1 with E2, zero orphans) ---
+            ent = cust_entry.get(key)
+            if ent is None and cam == "C05":
+                ent = t["track"]                                   # a C05 door track may itself be the entry
+            entparked = (key in parked) or (ent is not None and ("C05", ent) in parked)   # parking moves the WHOLE person
+            pid, group = None, None
+            if key in staff_emp:
+                eid = staff_emp.get(key)
+                pid = f"S{tags['staff'][eid]}" if eid in tags["staff"] else "S?"   # unnamed staff still traceable
+            elif ann_cat == "staff":
+                pid = "S?"                                         # human-marked staff, not enrolled -> unassigned, still traceable
+            elif ent is not None and not entparked:
+                n = tags["cust"].get((window, ent))
+                if n:
+                    pid = f"C{n}"
+                    g = tags["grp"].get((window, ent))
+                    group = f"G{g}" if g else None
+            # --- determination DERIVES from the pid (+ park + explicit non-customer call) so buckets == E2 ---
+            if entparked:
+                sugg, conf, det = "on_hold", ann_cat is not None, "on_hold"
+            elif disp == "accounted":
+                conf = ann_cat is not None
+                if ann_cat in ("passby", "not_person", "duplicate"):
+                    sugg = det = ann_cat                           # explicit human "not a customer" wins
+                elif pid and pid[0] == "S":
+                    sugg = det = "staff"
+                elif pid and pid[0] == "C":
+                    sugg = det = "customer"
+                else:
+                    sugg = det = "on_hold"                         # accounted but no #C/#S -> pending, never an orphan
             else:
-                if disp == "accounted":
-                    sugg = "staff" if key in staff_emp else "customer"
-                elif disp == "street":
+                if disp == "street":
                     sugg = "passby"
                 elif disp == "inside":
-                    # only GENUINE noise -> not_person: a brief blip (<=4 frames) that's also unconfident,
-                    # tiny, or static. Real interior people (median conf 0.80, decent size) -> to_review,
-                    # so we no longer mislabel ~90% of them as 'not a person' (the old dur<3s rule did).
+                    # only GENUINE noise -> not_person: a brief blip (<=4 frames) that's also unconfident, tiny,
+                    # or static. Real interior people (median conf 0.80) -> to_review (not 'not a person').
                     pconf = t.get("peak_conf", 1.0) or 1.0
                     nfr = t.get("frames", 0) or 0
                     maxw = max((p[3] for p in traj if len(p) >= 4), default=0.0)
                     span = ((max((p[1] for p in traj), default=0) - min((p[1] for p in traj), default=0))
                             + (max((p[2] for p in traj), default=0) - min((p[2] for p in traj), default=0))) if traj else 0.0
                     noise = nfr <= 4 and (pconf < 0.55 or maxw < 0.06 or span < 0.02)
-                    sugg = "not_person" if noise else "inside"   # real interior, not matched -> Inside bucket
+                    sugg = "not_person" if noise else "inside"
                 else:                                             # door -> the human must decide enter/pass
                     sugg = "to_review"
-                conf = ann_cat is not None                        # confirmed = a human annotation exists
+                conf = ann_cat is not None
                 det = ann_cat if conf else sugg
-            cropr = (t.get("crop", "") or "").replace("\\", "/")
-            cw, ch = _crop_dims(cropr) if with_dims else (None, None)   # day view skips per-crop header reads
-            pid, group = None, None                            # day-global tags: S{rank} staff, C{arrival} customer, G{group}
-            if staff_emp.get(key):
-                pid = f"S{tags['staff'].get(staff_emp[key], staff_emp[key])}"
-            else:
-                ent = cust_entry.get(key)
-                if ent is None and cam == "C05":
-                    ent = t["track"]                       # a C05 door track may itself be a confirmed entry (human-added missed customer)
-                n = tags["cust"].get((window, ent)) if ent is not None else None
-                if n:
-                    pid = f"C{n}"
-                    g = tags["grp"].get((window, ent))
-                    group = f"G{g}" if g else None
             out.append({"camera": cam, "track": t["track"], "window": window, "ist": t.get("first_ist"), "dur_s": dur,
                         "crop": cropr, "crop_w": cw, "crop_h": ch,
                         "disposition": disp, "staff": key in staff_emp, "annotation": ann_cat,
@@ -1091,9 +1104,11 @@ def _confirmed_entries(window):
     extra = [t for t, c in ann.items() if c == "customer" and t not in auto and t not in out_tracks]   # ...isn't a new customer (no double-count)
     det_ist = {d["track"]: d["ist"] for d in store.get_detections(window)
                if d.get("camera") == "C05"} if extra else {}
+    parked = _parked_set(window)                                              # held-for-review = PENDING -> not counted (matches the All-Detections on_hold bucket)
     entries = [{"window": window, "track": t, "ist": ist} for t, ist in auto.items()
-               if ann.get(t) not in _RESOLVED_NOT_CUSTOMER]
-    entries += [{"window": window, "track": t, "ist": det_ist[t]} for t in extra if det_ist.get(t)]
+               if ann.get(t) not in _RESOLVED_NOT_CUSTOMER and ("C05", t) not in parked]
+    entries += [{"window": window, "track": t, "ist": det_ist[t]} for t in extra
+                if det_ist.get(t) and ("C05", t) not in parked]
     dwell = [v["dwell_s"] for v in data.get("visits", [])
              if v.get("dwell_s") and ann.get(v["in_track"]) not in _RESOLVED_NOT_CUSTOMER]
     return entries, dwell
