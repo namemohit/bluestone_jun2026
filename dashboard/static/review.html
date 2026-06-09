@@ -189,6 +189,9 @@
   .staffcard > summary { display:flex; align-items:center; gap:7px; flex-wrap:wrap; font-size:13px; }
   .staffthumb { height:44px; width:36px; object-fit:cover; border-radius:5px; border:1px solid var(--line); vertical-align:middle; }
   .staffthumb.nocrop { display:inline-flex; align-items:center; justify-content:center; background:#2a323d; font-size:16px; }
+  .marquee { position:fixed; border:1px solid var(--accent); background:rgba(76,141,255,.12); pointer-events:none; z-index:60; border-radius:3px; }
+  .dcard.marq-hit { outline:2px solid var(--accent); outline-offset:-1px; }
+  #dets { user-select:none; } #dets img { -webkit-user-drag:none; user-drag:none; }
   .stafflist { display:flex; flex-direction:column; gap:12px; }
   .scard { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
   .shead { display:flex; align-items:center; gap:12px; margin-bottom:10px; } .sthumb { height:72px; width:54px; object-fit:cover; border-radius:7px; } .sthumb.nocrop { display:inline-flex; align-items:center; justify-content:center; background:#2a323d; font-size:22px; }
@@ -677,7 +680,7 @@ function detCard(d){
   else if (OUTCOMES.includes(det)) head = RO ? `<div class="dtag sugg">${(det==='staff'&&d.staff_name)?d.staff_name+'?':'suggested'}</div>` : `${nameTag}<button class="confirmbtn" onclick="allocate('${d.window}','${d.camera}',${d.track},'${d.crop||''}','${det}')">✓ confirm</button>`;
   else if (det==='inside') head = RO ? `<div class="dtag sugg">already inside</div>` : `<button class="confirmbtn" title="already counted at the door" onclick="allocate('${d.window}','${d.camera}',${d.track},'${d.crop||''}','duplicate')">✓ already counted</button>`;
   const winb = (DAY && d.window) ? `<span class="winbadge">${(d.window.split('_')[1]||'').replace(/(\d\d)(\d\d)/,'$1:$2')}</span>` : '';   // which hour, in day view
-  return `<div class="ev dcard ${d.confirmed?'resolved':''} ${isSel?'selected':''}">${chk}${frameBtn}${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''} ${winb}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}${pidTag(d)}${d.demo?` <span class="demo">${d.demo}</span>`:''}</div>${head}${menu}</div>`;
+  return `<div class="ev dcard ${d.confirmed?'resolved':''} ${isSel?'selected':''}" data-w="${d.window}" data-cam="${d.camera}" data-trk="${d.track}" data-crop="${d.crop||''}">${chk}${frameBtn}${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''} ${winb}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}${pidTag(d)}${d.demo?` <span class="demo">${d.demo}</span>`:''}</div>${head}${menu}</div>`;
 }
 function bucketArr(k){ return (DETALL||[]).filter(d=>d.determination===k && detKeep(d)).sort((a,b)=>(a.ist||'').localeCompare(b.ist||'')); }
 function buildBucketCards(k){ return bucketArr(k).map(detCard).join('')||'<p class="empty">none</p>'; }
@@ -709,7 +712,7 @@ function renderDets(){
     `<div class="prog"><b>Closing the day</b> — ${totalConf} / ${denom} confirmed${stale}<div class="pbar"><i style="width:${prog}%"></i></div></div>
      ${bulkbar}
      <div class="detf">filter: ${['C05','C11','C14'].map(c=>`<label><input type="checkbox" ${DETF.cams[c]?'checked':''} onchange="toggleCam('${c}')"> ${c}</label>`).join(' ')}
-       &nbsp;·&nbsp; <span class="hint">tick crops to multi-select</span>
+       &nbsp;·&nbsp; <span class="hint">tick or ✋ <b>drag a box</b> to multi-select · Shift-drag to deselect</span>
        &nbsp;·&nbsp; hide &lt; <input type="number" value="${DETF.minDur}" min="0" step="1" style="width:46px" onchange="setMinDur(this.value)">s
        &nbsp;·&nbsp; min crop <input type="number" value="${DETF.minW||0}" min="0" step="10" title="hide crops narrower than this many px (horizontal)" style="width:54px" onchange="setMinW(this.value)">w
        × <input type="number" value="${DETF.minH||0}" min="0" step="10" title="hide crops shorter than this many px (vertical)" style="width:54px" onchange="setMinH(this.value)">h px
@@ -850,6 +853,45 @@ function toggleSel(window, camera, track, crop){
   renderDets();
 }
 function clearSelDets(){ SEL.clear(); renderDets(); }
+// --- rubber-band marquee: drag a box over All-Detections crops to mass-select (Shift/Alt+drag deselects) ---
+(function(){
+  let sx, sy, drag=false, snap=[], box=null, justDragged=false;
+  function start(e){
+    if(e.button!==0) return;
+    const d=document.getElementById('dets'); if(!d || !d.contains(e.target)) return;
+    if(e.target.closest('button,input,summary,a,.ddhead')) return;     // leave normal clicks/checkboxes alone
+    sx=e.clientX; sy=e.clientY; drag=false;
+    snap=[...d.querySelectorAll('.dcard')].map(el=>({el, r:el.getBoundingClientRect()}));   // freeze rects -> cheap mousemove
+    window.addEventListener('mousemove', move, true);
+    window.addEventListener('mouseup', end, true);
+  }
+  function move(e){
+    const dx=e.clientX-sx, dy=e.clientY-sy;
+    if(!drag && Math.abs(dx)+Math.abs(dy) < 6) return;                 // movement threshold -> a click isn't a drag
+    if(!drag){ drag=true; box=document.createElement('div'); box.className='marquee'; document.body.appendChild(box); }
+    e.preventDefault();
+    const x=Math.min(sx,e.clientX), y=Math.min(sy,e.clientY), w=Math.abs(dx), h=Math.abs(dy);
+    box.style.cssText=`left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
+    snap.forEach(c=>{ const r=c.r, hit=!(r.right<x||r.left>x+w||r.bottom<y||r.top>y+h); c.el.classList.toggle('marq-hit',hit); });
+  }
+  function end(e){
+    window.removeEventListener('mousemove', move, true);
+    window.removeEventListener('mouseup', end, true);
+    if(!drag) return;                                                  // it was just a click
+    drag=false; justDragged=true;
+    const rm = e.shiftKey || e.altKey;
+    snap.forEach(c=>{ if(!c.el.classList.contains('marq-hit')) return;
+      const el=c.el, k=el.dataset.w+'|'+el.dataset.cam+'|'+el.dataset.trk;
+      if(rm) SEL.delete(k);
+      else SEL.set(k, {window:el.dataset.w, camera:el.dataset.cam, track:parseInt(el.dataset.trk), crop:el.dataset.crop||''});
+      el.classList.remove('marq-hit');
+    });
+    if(box){ box.remove(); box=null; }
+    renderDets();
+  }
+  document.addEventListener('mousedown', start, true);
+  document.addEventListener('click', e=>{ if(justDragged){ e.stopPropagation(); e.preventDefault(); justDragged=false; } }, true);   // swallow the click that ends a drag
+})();
 function applyDetLocal(window, camera, track, category){   // optimistic: move the card + confirm, no refetch
   const d = DETALL && DETALL.find(x=>x.window===window && x.camera===camera && x.track===track);
   if (d){ d.determination=category; d.confirmed=true; d.annotation=category; d.parked=false; }
