@@ -159,6 +159,20 @@ class SupabaseStore:
         # every page refresh — the per-window loop was ~2N Supabase calls = seconds of dropdown lag).
         vmap = self.get_visits_many(ids)
         lmap = self.get_labels_many(ids)
+        import json as _json, pathlib as _pl, re as _re
+
+        def _rng(wid):                                          # "HH:MM - HH:MM" from window.json label (real +Xmin, else 60)
+            try:
+                lbl = _json.loads((_pl.Path(self.root) / wid / "window.json").read_text(encoding="utf-8")).get("label", "")
+            except Exception:
+                return None
+            m = _re.search(r"(\d{1,2}):(\d{2})", lbl)
+            if not m:
+                return None
+            h, mn = int(m.group(1)), int(m.group(2))
+            dm = _re.search(r"\+(\d+)\s*min", lbl)
+            e = h * 60 + mn + (int(dm.group(1)) if dm else 60)
+            return f"{h:02d}:{mn:02d} - {(e // 60) % 24:02d}:{e % 60:02d}"
         out = []
         for w in ids:
             visits = vmap.get(w, {}).get("visits", [])
@@ -166,7 +180,7 @@ class SupabaseStore:
             reviewed = [v for v in visits if v["id"] in labels]
             confirmed = sum(1 for v in reviewed if labels[v["id"]] in ("confirm", "employee"))
             out.append({"window": w, "visits": len(visits), "reviewed": len(reviewed), "confirmed": confirmed,
-                        "rejected": len(reviewed) - confirmed,
+                        "rejected": len(reviewed) - confirmed, "range": _rng(w),
                         "precision": round(confirmed / len(reviewed), 3) if reviewed else None,
                         "unreviewed": len(visits) - len(reviewed)})
         return out

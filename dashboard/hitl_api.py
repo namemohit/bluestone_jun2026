@@ -320,8 +320,7 @@ def detections_day(date: str) -> dict:
     Mirrors visits_day; each detection already carries its 'window' (set in _classify_detections)."""
     if not date or "/" in date or "\\" in date or ".." in date:
         raise HTTPException(400, "bad date")
-    import glob
-    windows = sorted({Path(p).parent.name for p in glob.glob(f"outputs/{date}_*/visits.json")})
+    windows = _day_windows(date)
     tags = _daily_tags(date)                                          # compute the day-global C#/G#/S# numbering ONCE
     all_dets: list = []
     for win in windows:
@@ -366,6 +365,16 @@ def _crop_dims(crop: str):
     return _CROP_DIM[crop]
 
 
+def _day_windows(date: str) -> list:
+    """Real operating-hours windows for a date: outputs/<date>_HHMM (4-digit time). Excludes the
+    pre-open '<date>_09' stub (store opens ~11:24) so the whole-day numbering/report/detections only
+    count real customers. (Test slices like 'L4_hitl_test' never match the <date>_* glob anyway.)"""
+    import glob
+    import re as _re
+    return sorted({Path(p).parent.name for p in glob.glob(f"outputs/{date}_*/visits.json")
+                   if _re.search(r"_\d{4}$", Path(p).parent.name)})
+
+
 def _daily_tags(date: str) -> dict:
     """Day-global DISPLAY numbering (recomputed per request, passed down once): customers C1..n by arrival
     time across the whole day, their arrival group G1..n, and staff S1..n by enrollment rank. Reuses the
@@ -381,7 +390,7 @@ def _daily_tags(date: str) -> dict:
             return h * 3600 + m * 60 + s
         except Exception:
             return 0
-    windows = sorted({Path(p).parent.name for p in glob.glob(f"outputs/{date}_*/visits.json")})
+    windows = _day_windows(date)
     entries = []
     for win in windows:
         try:
@@ -1152,6 +1161,19 @@ def _entry_crop_info(window):
     for e in data.get("open_sessions", []):
         info.setdefault(e["track"], {"crop": (e.get("crop") or "").replace("\\", "/"),
                                      "out_ist": None, "dwell_s": None})
+    try:  # door-crop fallback: a human-added "missed customer" (annotation only, not in visits/open) still gets a face
+        wcfg = json.loads((OUTPUTS / window / "window.json").read_text(encoding="utf-8"))
+        for t in json.loads((Path(wcfg["l1"]) / "tracks.json").read_text(encoding="utf-8")).get("tracks", []):
+            cr = (t.get("crop") or "").replace("\\", "/")
+            if not cr:
+                continue
+            cur = info.get(t["track"])
+            if cur is None:
+                info[t["track"]] = {"crop": cr, "out_ist": None, "dwell_s": None}
+            elif not cur.get("crop"):
+                cur["crop"] = cr
+    except Exception:
+        pass
     return info
 
 
@@ -1198,7 +1220,7 @@ def _day_report(date: str, windows=None) -> dict:
     from logic.grouping import group_sessions
     entries, dwell = [], []
     if windows is None:
-        windows = sorted({Path(p).parent.name for p in glob.glob(f"outputs/{date}_*/visits.json")})
+        windows = _day_windows(date)
     for win in windows:
         e, d = _confirmed_entries(win)
         entries += e
