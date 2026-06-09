@@ -47,6 +47,64 @@ class MiVOLOEstimator(DemographicsEstimator):
         )
 
 
+def age_bucket(age) -> str:
+    """Map a continuous age to one of AGE_BUCKETS."""
+    try:
+        a = int(age)
+    except Exception:
+        return "unknown"
+    for lo, hi, b in ((0, 12, "0-12"), (13, 19, "13-19"), (20, 34, "20-34"), (35, 54, "35-54")):
+        if lo <= a <= hi:
+            return b
+    return "55+"
+
+
+class InsightFaceEstimator(DemographicsEstimator):
+    """Real age/gender via InsightFace buffalo_l (face-detect + genderage in one). Lazy-loads the model
+    (~350 MB, auto-downloaded to ~/.insightface). estimate(crop) accepts an image PATH or a BGR ndarray
+    and returns {gender, gender_conf, age, age_bucket, age_conf, face}. CCTV reality: ~half of full-body
+    person crops have a usable face (small/distant/back-facing -> face=False, caller shows 'unknown')."""
+
+    def __init__(self, gpu: bool = False, det_size: int = 640):
+        self._app = None
+        self._gpu = gpu
+        self._det = det_size
+
+    def _model(self):
+        if self._app is None:
+            from insightface.app import FaceAnalysis
+            providers = (["CUDAExecutionProvider", "CPUExecutionProvider"] if self._gpu
+                         else ["CPUExecutionProvider"])
+            app = FaceAnalysis(name="buffalo_l", providers=providers)
+            app.prepare(ctx_id=0 if self._gpu else -1, det_size=(self._det, self._det))
+            self._app = app
+        return self._app
+
+    def estimate(self, crop) -> dict:
+        none = {"gender": "unknown", "gender_conf": 0.0, "age": None,
+                "age_bucket": "unknown", "age_conf": 0.0, "face": False}
+        img = crop
+        if isinstance(crop, str):
+            import cv2
+            import os
+            img = cv2.imread(os.path.normpath(crop))
+        if img is None:
+            return none
+        try:
+            faces = self._model().get(img)
+        except Exception:
+            return none
+        if not faces:
+            return none
+        f = max(faces, key=lambda z: float(getattr(z, "det_score", 0.0)))   # the most confidently-detected face
+        age = int(getattr(f, "age", 0) or 0)
+        sex = getattr(f, "sex", None)
+        gender = "male" if sex == "M" else "female" if sex == "F" else "unknown"
+        conf = round(float(getattr(f, "det_score", 0.0)), 3)
+        return {"gender": gender, "gender_conf": conf, "age": age,
+                "age_bucket": age_bucket(age), "age_conf": conf, "face": True}
+
+
 def aggregate(estimates) -> dict:
     """Aggregate a list of per-visitor estimates into gender + age-bucket counts."""
     gender = Counter()
@@ -62,8 +120,11 @@ def aggregate(estimates) -> dict:
 
 
 def build_demographics(cfg: dict | None = None) -> DemographicsEstimator:
-    """Factory: 'stub' (GPU-free) or 'mivolo' (real, age+gender)."""
+    """Factory: 'stub' (GPU-free), 'insightface' (real, buffalo_l face+genderage), or 'mivolo'."""
     cfg = cfg or {}
-    if cfg.get("backend", "stub") == "mivolo":
+    backend = cfg.get("backend", "stub")
+    if backend == "insightface":
+        return InsightFaceEstimator(gpu=cfg.get("gpu", False), det_size=cfg.get("det_size", 640))
+    if backend == "mivolo":
         return MiVOLOEstimator(weights=cfg.get("weights", ""), device=cfg.get("device"))
     return StubDemographicsEstimator()

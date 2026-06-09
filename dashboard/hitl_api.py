@@ -540,7 +540,8 @@ def _classify_detections(window: str, with_dims: bool = True, tags: dict | None 
                         "disposition": disp, "staff": key in staff_emp, "annotation": ann_cat,
                         "parked": key in parked, "suggested": sugg, "confirmed": conf,
                         "determination": det, "employee_id": staff_emp.get(key),
-                        "pid": pid, "group": group, "weak_staff": key in weak_staff})
+                        "pid": pid, "group": group, "weak_staff": key in weak_staff,
+                        "demo": _demo_label(cropr)})   # age/gender estimate (None if no face)
     return out
 
 
@@ -1177,6 +1178,33 @@ def _entry_crop_info(window):
     return info
 
 
+_DEMO = {"data": {}, "mtime": -1.0}   # path-keyed age/gender cache (outputs/demographics_cache.json), hot-reloaded
+
+
+def _demo_label(crop) -> str | None:
+    """'~30s · M' from the cached face-based age/gender estimate for a crop path; None when there's no
+    face or no cache. Reloads the cache file when it changes (re-run the batch -> labels update live)."""
+    if not crop:
+        return None
+    f = OUTPUTS / "demographics_cache.json"
+    try:
+        mt = f.stat().st_mtime
+    except Exception:
+        return None
+    if mt != _DEMO["mtime"]:
+        try:
+            _DEMO["data"] = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            _DEMO["data"] = {}
+        _DEMO["mtime"] = mt
+    e = _DEMO["data"].get(str(crop).replace("\\", "/"))
+    if not e or not e.get("face"):
+        return None
+    age, g = e.get("age"), e.get("gender")
+    gi = "M" if g == "male" else "F" if g == "female" else "?"
+    return f"{('~' + str((age // 10) * 10) + 's') if age else '?'} · {gi}"
+
+
 def _passby_count(window) -> int:
     """Fast pass-by count for the report's capture rate: C05 door tracks whose path is mostly inside
     the street_mask and that aren't an accounted visit. Reads only C05 tracks.json + visits.json —
@@ -1251,6 +1279,7 @@ def _day_report(date: str, windows=None) -> dict:
         ci = cinfo.get(e["window"], {}).get(e["track"], {})
         rich.append({"window": e["window"], "track": e["track"], "in_ist": e["ist"],
                      "pid": f"C{idx+1}", "group": (f"G{gmap[idx]}" if gmap.get(idx) else None),
+                     "demo": _demo_label(ci.get("crop")),
                      "out_ist": ci.get("out_ist"), "dwell_s": ci.get("dwell_s"), "crop": ci.get("crop")})
     customer_groups = []
     for g in groups:
