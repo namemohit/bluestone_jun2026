@@ -186,6 +186,9 @@
   .e2row { display:flex; gap:12px; flex-wrap:wrap; }
   .e2cell { margin:0; text-align:center; width:96px; }
   .e2cell figcaption { font-size:10px; color:var(--dim); margin-top:4px; line-height:1.4; }
+  .staffcard > summary { display:flex; align-items:center; gap:7px; flex-wrap:wrap; font-size:13px; }
+  .staffthumb { height:44px; width:36px; object-fit:cover; border-radius:5px; border:1px solid var(--line); vertical-align:middle; }
+  .staffthumb.nocrop { display:inline-flex; align-items:center; justify-content:center; background:#2a323d; font-size:16px; }
   .stafflist { display:flex; flex-direction:column; gap:12px; }
   .scard { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
   .shead { display:flex; align-items:center; gap:12px; margin-bottom:10px; } .sthumb { height:72px; width:54px; object-fit:cover; border-radius:7px; } .sthumb.nocrop { display:inline-flex; align-items:center; justify-content:center; background:#2a323d; font-size:22px; }
@@ -710,26 +713,44 @@ function renderDets(){
 let ATT = {};   // employee_id -> {in, out} for the SELECTED period (one hour's in/out, else the day span) — merged into the staff cards
 function renderStaff(){
   const d = REV; if (!d || !$('#staff')) return;
+  const cards = d.staff_cards;
+  if (!cards || !cards.length) return renderStaffLegacy(d);   // cloud read-only (no local files) -> enrolled-only fallback
+  const stThumb = c => (c&&!HIDE)?`<img src="${cropURL(c)}" class="staffthumb">`:'<div class="staffthumb nocrop">👤</div>';   // collapsed: click summary to expand
+  const grThumb = c => (c&&!HIDE)?`<img src="${cropURL(c)}" class="gthumb" style="cursor:zoom-in" onclick="event.stopPropagation();zoom('${c}')">`:'<div class="gthumb nocrop">👤</div>';
+  $('#staff').innerHTML = cards.map(g=>{
+      const lab = g.name || (g.pid==='S?'?'unassigned staff':'(unnamed)');
+      const fvl = g.floor_visits||[];
+      const span = fvl.length ? `${fvl[0].in||'—'} → ${fvl[fvl.length-1].out||'still in'}` : '';
+      const fvsum = g.n_crossings ? `${g.n_visits} floor-visit${g.n_visits!==1?'s':''}${span?` (${span})`:''}` : 'interior only — no door crossing';
+      const fvDetail = g.n_crossings ? `<div class="hint" style="margin:4px 0 8px">🚪 C05 door floor-visits: ${fvl.map(v=>`<b>${v.in||'—'}</b>${v.out?(' → '+v.out):' → still in'}`).join(' &nbsp;·&nbsp; ')}</div>` : '';
+      const actions = (RO||DAY) ? '' : (g.employee_id
+          ? `<button onclick="renameStaff(${g.employee_id})">✎ name</button> <button onclick="openMatches(${g.employee_id})" title="every sighting of this person across the whole day">🔍 all-day sightings</button> <button onclick="unstaffMany('${(g.crops||[]).map(c=>c.track).join('|')}')">↩ not staff</button>`
+          : `<span class="hint">⚠ unassigned — click 👤 on a crop to give them a name</span>`);
+      const grid = (g.crops||[]).map(c=>{
+        const name=(RO||DAY||g.employee_id)?'':`<button class="xtrack" title="assign a name" onclick="event.stopPropagation();openStaffPicker('open-${c.track}',${c.track},'${c.crop}',null,'${c.window||WIN}')">👤</button>`;
+        const x=(RO||DAY)?'':`<button class="xtrack" title="not staff — back to review" onclick="event.stopPropagation();unstaffTrack(${c.track})">✗</button>`;
+        return `<figure>${grThumb(c.crop)}<figcaption>${c.camera} ${c.ist||''}<br>#${c.track} ${name}${x}</figcaption></figure>`;
+      }).join('');
+      return `<details class="subblk staffcard">
+        <summary>${stThumb(g.best_crop)} <span class="pidbadge staff">#${g.pid}</span> <b>${lab}</b> · ${g.n_sightings} sighting${g.n_sightings!==1?'s':''} <span class="hint">— ${fvsum}</span></summary>
+        ${fvDetail}<div class="sgrp">${grid}</div><div style="margin-top:8px">${actions}</div></details>`;
+    }).join('') || '<p class="empty">no staff this period</p>';
+}
+async function unstaffMany(s){ for(const t of String(s).split('|').filter(Boolean)) await unstaffTrack(parseInt(t)); }
+function renderStaffLegacy(d){   // enrolled-only staff render (cloud read-only fallback when det=staff crops aren't available)
   $('#staff').innerHTML = (d.staff||[]).map(g=>{
       const lab = g.employee_id ? `${g.code||('S'+g.employee_id)}${g.name?' · '+g.name:''}` : 'unassigned';
-      const nAuto = (g.auto_tracks||[]).length;
       const att = g.employee_id ? ATT[g.employee_id] : null;
-      const inout = att ? ` &nbsp; <span style="color:var(--ink)">🕒 ${att.in} → ${att.out}</span>` : '';   // attendance for the selected period, merged in
-      const act = (RO||DAY) ? '' : (g.employee_id ? `<button onclick="renameStaff(${g.employee_id})">✎ name</button> <button onclick="openMatches(${g.employee_id})" title="see + confirm EVERY sighting of this person across the whole day (other timestamps)">🔍 all-day sightings</button> ` : '')
-                          + `<button onclick="unstaffGroup('${(g.visit_ids||[]).join('|')}')">↩ not staff</button>`;
+      const inout = att ? ` &nbsp; <span style="color:var(--ink)">🕒 ${att.in} → ${att.out}</span>` : '';
       const imgs = (g.crops||[]).map(c=>{
-        const pick = `openStaffPicker('open-${c.track}',${c.track},'${c.crop}',null,'${WIN}')`;
-        const name = (RO||DAY||g.employee_id)?'':`<button class="xtrack" title="assign this staffer a name" onclick="event.stopPropagation();${pick}">👤</button>`;
-        const x = (RO||DAY)?'':`<button class="xtrack" title="not staff — back to review" onclick="event.stopPropagation();unstaffTrack(${c.track})">✗</button>`;
-        const img = (HIDE||!c.crop)?'<div class="nocrop">👤</div>':`<img src="${cropURL(c.crop)}" onclick="event.stopPropagation();zoom('${c.crop}')" style="cursor:zoom-in" title="enlarge this crop">`;   // click = THIS crop only; cross-day matches moved to the 🔍 button
         const sp = g.pid ? `<span class="pidbadge staff">#${g.pid}</span>` : '';
-        return `<figure>${img}<figcaption>#${c.track} ${c.auto?'🤖':'✋'}${sp}${name}${x}</figcaption></figure>`;
+        const img = (HIDE||!c.crop)?'<div class="nocrop">👤</div>':`<img src="${cropURL(c.crop)}" onclick="event.stopPropagation();zoom('${c.crop}')" style="cursor:zoom-in" title="enlarge this crop">`;
+        return `<figure>${img}<figcaption>#${c.track} ${c.auto?'🤖':'✋'}${sp}</figcaption></figure>`;
       }).join('');
-      const sub = `${g.tracks.length} sighting${g.tracks.length>1?'s':''}` + (nAuto?` · ${nAuto} auto-found 🤖`:'');
       return `<div class="ev" style="width:auto;min-width:160px;text-align:left">
-        <div class="lb" style="font-size:13px"><b>${lab}</b> · ${sub}${inout}</div>
-        <div class="sgrp">${imgs}</div>${act}</div>`;
-    }).join('') || '<p class="empty">none — click 👤 on a visit/person to assign them</p>';
+        <div class="lb" style="font-size:13px"><b>${lab}</b> · ${g.tracks.length} sighting${g.tracks.length>1?'s':''}${inout}</div>
+        <div class="sgrp">${imgs}</div></div>`;
+    }).join('') || '<p class="empty">none</p>';
 }
 async function loadAttendance(){   // build ATT (in/out for the selected period) and merge it into the staff cards — no separate Attendance section
   const date = (WIN||'').split('_')[0] || '';

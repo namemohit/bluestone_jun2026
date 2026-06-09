@@ -195,6 +195,7 @@ def visits(window: str) -> dict:
            for e in data.get("open_sessions", [])],
         key=lambda x: x["ist"])
     data["metrics"] = store.metrics(window)
+    data["staff_cards"] = _staff_from_dets(window)   # E2 staff = the SAME det=staff crops as All-Detections (1:1, incl S?)
     return data
 
 
@@ -265,6 +266,7 @@ def visits_day(date: str) -> dict:
     agg["visits"].sort(key=lambda v: v.get("in_ist") or "")
     met["precision"] = round(met["confirmed"] / met["reviewed"], 3) if met["reviewed"] else None
     agg["metrics"] = met
+    agg["staff_cards"] = _staff_from_dets(date)      # whole-day staff cards, 1:1 with the All-Detections staff bucket
     return agg
 
 
@@ -555,6 +557,50 @@ def _classify_detections(window: str, with_dims: bool = True, tags: dict | None 
                         "determination": det, "employee_id": staff_emp.get(key),
                         "pid": pid, "group": group, "weak_staff": key in weak_staff,
                         "demo": _demo_label(cropr)})   # age/gender estimate (None if no face)
+    return out
+
+
+def _staff_from_dets(window: str) -> list:
+    """Staff cards DERIVED from the same det=='staff' crops as the All-Detections staff bucket, so the E2 staff
+    panel is 1:1 with it (incl. unassigned 'S?'). `window` may be one 'YYYY-MM-DD_HHMM' or a whole date. Each
+    card carries every crop, the highest-resolution thumbnail, and C05 'floor-visits' = consecutive door
+    crossings paired in->out (interior cameras are sightings, NOT crossings)."""
+    wins = _day_windows(window) if "_" not in window else [window]
+    names = {e["id"]: e.get("name") for e in store.list_employees()}
+    groups: dict = {}
+    for w in wins:
+        try:
+            dets = _classify_detections(w, with_dims=False)
+        except Exception:
+            continue
+        for d in dets:
+            if d.get("determination") != "staff" or not d.get("pid"):
+                continue
+            g = groups.setdefault(d["pid"], {"pid": d["pid"], "employee_id": d.get("employee_id"),
+                                             "name": names.get(d.get("employee_id")), "crops": []})
+            g["crops"].append({"crop": d.get("crop"), "camera": d["camera"],
+                               "ist": d.get("ist"), "track": d["track"], "window": w})
+    out = []
+    for pid in sorted(groups):
+        g = groups[pid]
+        best, barea = None, -1
+        for c in g["crops"]:                                    # highest-pixel thumbnail
+            wd, ht = _crop_dims(c["crop"])
+            a = (wd or 0) * (ht or 0)
+            if a > barea:
+                barea, best = a, c["crop"]
+        g["best_crop"] = best or (g["crops"][0]["crop"] if g["crops"] else None)
+        crossings = sorted([c for c in g["crops"] if c["camera"] == "C05"], key=lambda c: c["ist"] or "")
+        visits = []                                             # C05 door crossings -> consecutive in->out floor-visits
+        for i in range(0, len(crossings), 2):
+            a = crossings[i]
+            b = crossings[i + 1] if i + 1 < len(crossings) else None
+            visits.append({"in": a["ist"], "out": (b["ist"] if b else None), "still_inside": b is None})
+        g["floor_visits"] = visits
+        g["n_visits"] = len(visits)
+        g["n_crossings"] = len(crossings)
+        g["n_sightings"] = len(g["crops"])
+        out.append(g)
     return out
 
 
