@@ -225,3 +225,37 @@ alter table showroom.employees add column if not exists code text;
 alter table showroom.labels drop constraint if exists labels_verdict_check;
 alter table showroom.labels add constraint labels_verdict_check
   check (verdict in ('confirm','reject','employee','false_detection','reset'));
+
+-- ---- Phase 2: permanent staff number (immutable; S1 always means ONE person) -----------------
+--   staff_no = 1..n by enrollment order; a future hire takes max(staff_no)+1. Unlike the old
+--   rank-by-id display, deleting an employee never renumbers the others.
+alter table showroom.employees add column if not exists staff_no integer;
+with ranked as (select id, row_number() over (order by id) rn
+                from showroom.employees where store_id = 's14')
+update showroom.employees e set staff_no = r.rn
+  from ranked r where e.id = r.id and e.staff_no is null;
+create unique index if not exists employees_staff_no_uniq on showroom.employees (store_id, staff_no);
+
+-- ---- Phase 2: person_contexts — durable per-day PID registry (the enrichable "context") --------
+--   Frozen at /publish so #C / #G stop drifting between views after the day is finalized. Also the
+--   home each PID's accumulated evidence will hang off (exit decision, demographics, ReID emb later).
+create table if not exists showroom.person_contexts (
+  id          bigint generated always as identity primary key,
+  store_id    text not null default 's14',
+  date        date not null,
+  kind        text not null default 'customer' check (kind in ('customer','staff')),
+  pid_no      integer not null,                              -- frozen #C (customer) within the day
+  group_no    integer,                                       -- frozen #G
+  employee_id integer,                                       -- set when kind='staff'
+  window_id   text,                                          -- canonical (earliest) entry window
+  track       integer,                                       -- canonical entry door track
+  in_ist      time,
+  out_ist     time,
+  dwell_s     numeric,
+  exit_src    text,                                          -- matched | presumed | null
+  frozen_at   timestamptz not null default now(),
+  meta        jsonb not null default '{}'::jsonb
+);
+create index if not exists person_contexts_by_day on showroom.person_contexts (store_id, date);
+create unique index if not exists person_contexts_pid_uniq
+  on showroom.person_contexts (store_id, date, kind, pid_no);

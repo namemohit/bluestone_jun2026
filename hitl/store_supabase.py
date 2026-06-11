@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import json
 import pathlib
+import threading
 from contextlib import contextmanager
 
 CONFIG = pathlib.Path("configs/supabase.json")
 IST = "+05:30"
+_CXLOCAL = threading.local()   # one reused Postgres connection PER THREAD (FastAPI runs sync routes in a threadpool).
+                               # Avoids paying a fresh TLS+auth handshake (~0.7s) on every query — the page-load killer.
 
 
 def _cfg() -> dict:
@@ -45,20 +48,40 @@ class SupabaseStore:
         self.schema = cfg.get("schema", "showroom")
         self.root = pathlib.Path(root)
 
-    @contextmanager
-    def _cx(self):
+    def _connect(self):
         import psycopg2
         from psycopg2.extras import RealDictCursor
-        cx = psycopg2.connect(self.dburl, connect_timeout=20, cursor_factory=RealDictCursor,
-                              options=f"-c search_path={self.schema},public")
+        return psycopg2.connect(self.dburl, connect_timeout=20, cursor_factory=RealDictCursor,
+                                options=f"-c search_path={self.schema},public")
+
+    @contextmanager
+    def _cx(self):
+        # Reuse this thread's open connection (no per-query handshake). Reconnect if it's missing, closed,
+        # or points at a different DB. On ANY error, drop the connection so the next call starts clean.
+        cx = getattr(_CXLOCAL, "cx", None)
+        if cx is None or cx.closed or getattr(_CXLOCAL, "key", None) != self.dburl:
+            if cx is not None:
+                try:
+                    cx.close()
+                except Exception:
+                    pass
+            cx = self._connect()
+            _CXLOCAL.cx = cx
+            _CXLOCAL.key = self.dburl
         try:
             yield cx
             cx.commit()
         except Exception:
-            cx.rollback()
+            try:
+                cx.rollback()
+            except Exception:
+                pass
+            try:
+                cx.close()
+            except Exception:
+                pass
+            _CXLOCAL.cx = None      # force a fresh connection next time (handles server-side drops/staleness)
             raise
-        finally:
-            cx.close()
 
     @staticmethod
     def _full_ts(date: str, hms: str) -> str | None:
@@ -237,16 +260,23 @@ class SupabaseStore:
 
     # ---- employee roster + gallery (attendance) -------------------------
     def list_employees(self, store_id: str = "s14") -> list[dict]:
-        with self._cx() as cx, cx.cursor() as cur:
-            cur.execute("select id, code, name from employees where store_id=%s order by id", (store_id,))
-            return [dict(r) for r in cur.fetchall()]
+        try:
+            with self._cx() as cx, cx.cursor() as cur:
+                cur.execute("select id, code, name, staff_no from employees where store_id=%s order by id", (store_id,))
+                return [dict(r) for r in cur.fetchall()]
+        except Exception:                                          # pre-migration: no staff_no column yet -> degrade gracefully
+            with self._cx() as cx, cx.cursor() as cur:
+                cur.execute("select id, code, name from employees where store_id=%s order by id", (store_id,))
+                return [dict(r) for r in cur.fetchall()]
 
     def create_employee(self, store_id: str = "s14", name=None) -> dict:
         with self._cx() as cx, cx.cursor() as cur:
             cur.execute("insert into employees(store_id, name) values(%s,%s) returning id", (store_id, name))
             eid = cur.fetchone()["id"]
-            cur.execute("update employees set code=%s where id=%s", (f"S{eid}", eid))
-        return {"id": eid, "code": f"S{eid}", "name": name}
+            cur.execute("select coalesce(max(staff_no),0)+1 as n from employees where store_id=%s", (store_id,))
+            sno = cur.fetchone()["n"]                                       # permanent staff number: max+1, never reused
+            cur.execute("update employees set code=%s, staff_no=%s where id=%s", (f"S{eid}", sno, eid))
+        return {"id": eid, "code": f"S{eid}", "name": name, "staff_no": sno}
 
     def rename_employee(self, emp_id: int, name: str) -> None:
         with self._cx() as cx, cx.cursor() as cur:
@@ -267,6 +297,15 @@ class SupabaseStore:
                         "from employee_gallery where store_id=%s", (store_id,))
             return [dict(r) for r in cur.fetchall()]
 
+    def get_gallery_meta(self, store_id: str = "s14") -> list[dict]:
+        """Gallery rows WITHOUT the heavy embedding vector — for the review UI's crop/thumbnail lookups.
+        The embedding (~512 floats/row) is only needed by L4 matching, not the dashboard, and transferring
+        + parsing it on every page load cost ~2s."""
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("select employee_id, crop_url, source_window, source_track "
+                        "from employee_gallery where store_id=%s", (store_id,))
+            return [dict(r) for r in cur.fetchall()]
+
     def add_annotation(self, window: str, camera: str, track: int, category: str, *,
                        crop_url=None, employee_id=None, duplicate_of=None, embedding=None,
                        reviewer: str = "human") -> None:
@@ -284,6 +323,19 @@ class SupabaseStore:
             cur.execute("select camera, track, category, employee_id, duplicate_of, crop_url "
                         "from latest_annotations where window_id=%s", (window,))
             return [dict(r) for r in cur.fetchall()]
+
+    def latest_annotations_bulk(self, windows: list[str]) -> dict[str, list[dict]]:
+        """Many windows' latest annotations in ONE round-trip, grouped by window_id. Lets the day-wide
+        C#/G#/S# numbering replace its per-window query fan-out (was ~1 RTT x 12 windows = the page-load lag)."""
+        out: dict[str, list[dict]] = {w: [] for w in windows}
+        if not windows:
+            return out
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("select window_id, camera, track, category, employee_id, duplicate_of, crop_url "
+                        "from latest_annotations where window_id = ANY(%s)", (list(windows),))
+            for r in cur.fetchall():
+                out.setdefault(r["window_id"], []).append(dict(r))
+        return out
 
     def staff_matches(self, employee_id: int, store_id: str = "s14") -> dict:
         """Every sighting grouped to ONE employee across the whole day, for human confirmation:
@@ -559,3 +611,28 @@ class SupabaseStore:
                         (store_id, period, scope))
             r = cur.fetchone()
             return dict(r) if r else None
+
+    # --- person_contexts: durable per-day PID registry, frozen at /publish ---
+    def save_person_contexts(self, date: str, rows: list[dict], *, store_id: str = "s14") -> int:
+        """Replace the day's frozen PID snapshot. Each row: {kind, pid_no, group_no, employee_id,
+        window_id, track, in_ist, out_ist, dwell_s, exit_src, meta}."""
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("delete from person_contexts where store_id=%s and date=%s", (store_id, date))
+            for r in rows:
+                cur.execute(
+                    "insert into person_contexts(store_id,date,kind,pid_no,group_no,employee_id,"
+                    "window_id,track,in_ist,out_ist,dwell_s,exit_src,meta) "
+                    "values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (store_id, date, r.get("kind", "customer"), r["pid_no"], r.get("group_no"),
+                     r.get("employee_id"), r.get("window_id"), r.get("track"),
+                     r.get("in_ist"), r.get("out_ist"), r.get("dwell_s"), r.get("exit_src"),
+                     json.dumps(r.get("meta") or {})))
+            return len(rows)
+
+    def get_person_contexts(self, date: str, *, store_id: str = "s14") -> list[dict]:
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("select kind, pid_no, group_no, employee_id, window_id, track, "
+                        "to_char(in_ist,'HH24:MI:SS') in_ist, to_char(out_ist,'HH24:MI:SS') out_ist, "
+                        "dwell_s::float dwell_s, exit_src, meta from person_contexts "
+                        "where store_id=%s and date=%s order by kind, pid_no", (store_id, date))
+            return [dict(r) for r in cur.fetchall()]

@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "dashboard",
-      "runtimeExecutable": "C:\\Users\\namem\\Desktop\\claude_mohit\\3_windows_codes_mohit\\bluestone_new_jun26\\.venv\\Scripts\\python.exe",
+      "runtimeExecutable": "C:\\Users\\namem\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
       "runtimeArgs": ["-m", "uvicorn", "dashboard.app:app", "--port", "8050"],
       "port": 8050
     }

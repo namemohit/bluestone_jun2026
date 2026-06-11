@@ -114,11 +114,11 @@
   <aside class="side">
     <div class="brand"><div class="logo"></div><div><b>Vision Console</b><span>BlueStone Showroom</span></div></div>
     <nav class="nav" id="nav">
-      <a data-v="overview" class="active"><span class="ic">▦</span> Overview</a>
-      <a data-v="review"><span class="ic">✓</span> Review <span id="navq"></span></a>
-      <a data-v="pipeline"><span class="ic">⚙</span> Pipeline</a>
-      <a data-v="training"><span class="ic">◴</span> Training</a>
-      <a data-v="sources"><span class="ic">⛁</span> Sources</a>
+      <a href="#overview" data-v="overview" class="active"><span class="ic">▦</span> Overview</a>
+      <a href="#review" data-v="review"><span class="ic">✓</span> Review <span id="navq"></span></a>
+      <a href="#pipeline" data-v="pipeline"><span class="ic">⚙</span> Pipeline</a>
+      <a href="#training" data-v="training"><span class="ic">◴</span> Training</a>
+      <a href="#sources" data-v="sources"><span class="ic">⛁</span> Sources</a>
     </nav>
     <div class="foot">Batch · next-morning review<br>human-in-the-loop</div>
   </aside>
@@ -163,14 +163,21 @@ function topbar(){
   $('ver').textContent='v'+(S.active_version||1);
   $('score').textContent=S.score+'%';
   $('dot').style.background=S.score>=95?'var(--good)':S.score>=50?'var(--warn)':'var(--bad)';
-  $('navq').innerHTML=S.cards.length?`<span class="pendpill hot" style="margin-left:auto">${S.cards.length}</span>`:'';
-  const titles={overview:['Overview','Day report — customers & employees'],review:['Review queue','Affirm or correct flagged visits'],
+  $('navq').innerHTML='';   // real /review owns its own counts
+  const _rt=document.querySelector('.top .right'); if(_rt) _rt.style.display=(VIEW==='review')?'none':'flex';   // synthetic model/accuracy/Reset pills are noise on the real Review
+  const titles={overview:['Overview','Day report — customers & employees'],review:['Showroom Review','Customers, staff & reconciliation'],
     pipeline:['Pipeline','Tune model parameters at each step'],training:['Training','Schedule, controls & model registry'],
     sources:['Sources','Connect the showroom NVR & cameras']};
   $('ptitle').textContent=titles[VIEW][0]; $('psub').textContent=titles[VIEW][1];
   document.querySelectorAll('#nav a').forEach(a=>a.classList.toggle('active',a.dataset.v===VIEW));
 }
-function go(v){ if(v==='sources') return openSources(); VIEW=v;render(); }
+function go(v){ location.hash=v; }   // navigation = set the hash; routeFromHash does the work (so /#review survives refresh + is shareable)
+function routeFromHash(){
+  let v=(location.hash||'').replace('#','');
+  if(!['overview','review','pipeline','training','sources'].includes(v)) v='overview';
+  if(v==='sources') return openSources();
+  VIEW=v; render();
+}
 async function openSources(){ SRC=await api('/api/sources'); VIEW='sources'; render(); }
 
 function render(){
@@ -203,6 +210,8 @@ function renderOverview(){
 }
 
 function renderReview(){
+  $('view').innerHTML = '<iframe src="/review?embed=1" title="Showroom Review" style="width:100%;height:calc(100vh - 64px);border:0;background:var(--surface)"></iframe>';
+  return;                                  // real /review embedded; synthetic queue below kept as dead code for now
   let h=`<div class="panel"><div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
     <h2 style="margin:0">Queue · ${S.cards.length} to review</h2>
     <button class="btn" style="margin-left:auto" onclick="acceptAll()">Accept all suggested</button>
@@ -354,8 +363,8 @@ async function testSources(){document.getElementById('srctest').innerHTML='<div 
 
 async function refresh(){S=await api('/api/state');render();}
 async function reset(){await api('/api/reset',{});CV={};await refresh();}
-document.getElementById('nav').addEventListener('click',e=>{const a=e.target.closest('a');if(a)go(a.dataset.v);});
-refresh();
+window.addEventListener('hashchange', routeFromHash);   // nav <a href="#review"> -> hashchange -> route; refresh on /#review stays on Review
+(async()=>{ S=await api('/api/state'); routeFromHash(); })();   // load state first (topbar/render need it), then route from the URL
 </script>
 </body>
 </html>

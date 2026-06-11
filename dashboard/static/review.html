@@ -5,12 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Showroom · Review</title>
 <style>
-  :root { --bg:#0f1216; --card:#181d24; --line:#262d37; --ink:#e7ecf3; --dim:#8a95a5;
-          --ok:#37b86a; --no:#e0533d; --warn:#e3a02b; --accent:#4c8dff; }
+  :root { --bg:#f4f6f9; --card:#ffffff; --line:#e6e9ef; --ink:#0f1729; --dim:#4b5563;
+          --ok:#16a34a; --no:#ef4444; --warn:#f59e0b; --accent:#2563eb; }
+  body.embed > header h1 { display:none; }   /* embedded in the console -> the shell provides the title */
+  body.embed .metrics { display:none; }       /* legacy visit-precision metrics (VISITS/REVIEWED/PRECISION/TO GO) are noise on the real review */
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--ink);
          font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
-  header { position:sticky; top:0; background:#10141a; border-bottom:1px solid var(--line);
+  header { position:sticky; top:0; background:var(--card); border-bottom:1px solid var(--line);
            padding:12px 18px; display:flex; gap:18px; align-items:center; flex-wrap:wrap; z-index:5; }
   header h1 { font-size:16px; margin:0; font-weight:650; }
   select { background:var(--card); color:var(--ink); border:1px solid var(--line);
@@ -34,12 +36,12 @@
   .crops { display:flex; gap:8px; }
   .crops figure { margin:0; text-align:center; }
   .crops img { height:120px; width:auto; max-width:120px; object-fit:cover; border-radius:8px;
-               background:#0a0d11; border:1px solid var(--line); }
+               background:var(--bg); border:1px solid var(--line); }
   .crops figcaption { color:var(--dim); font-size:10px; margin-top:3px; }
   .meta { flex:1; min-width:0; }
   .meta .when { font-size:15px; font-weight:600; }
   .meta .how { color:var(--dim); font-size:12px; margin-top:2px; }
-  .bar { height:6px; background:#0a0d11; border-radius:4px; margin-top:8px; max-width:240px; overflow:hidden; }
+  .bar { height:6px; background:var(--bg); border-radius:4px; margin-top:8px; max-width:240px; overflow:hidden; }
   .bar i { display:block; height:100%; background:linear-gradient(90deg,var(--no),var(--warn),var(--ok)); }
   .tag { display:inline-block; font-size:10px; padding:2px 7px; border-radius:999px; margin-top:6px;
          text-transform:uppercase; letter-spacing:.03em; }
@@ -47,7 +49,7 @@
   .tag.auto { background:rgba(76,141,255,.14); color:var(--accent); }
   .tag.done { background:rgba(55,184,106,.16); color:var(--ok); }
   .btns { display:flex; flex-direction:column; gap:6px; }
-  button { border:1px solid var(--line); background:#202732; color:var(--ink); border-radius:8px;
+  button { border:1px solid var(--line); background:#eef1f6; color:var(--ink); border-radius:8px;
            padding:7px 12px; cursor:pointer; font-size:13px; white-space:nowrap; }
   button:hover { border-color:var(--accent); }
   button.ok:hover { border-color:var(--ok); } button.no:hover { border-color:var(--no); }
@@ -62,36 +64,45 @@
   .linkbar.show { display:flex; }
   .hint { color:var(--dim); font-size:12px; }
   .empty { color:var(--dim); font-style:italic; }
-  #toast { position:fixed; left:50%; bottom:26px; transform:translateX(-50%); background:#222a36;
+  #toast { position:fixed; left:50%; bottom:26px; transform:translateX(-50%); background:#eef1f6;
            border:1px solid var(--accent); border-radius:10px; padding:11px 14px; display:none;
            gap:12px; align-items:center; z-index:30; box-shadow:0 8px 28px rgba(0,0,0,.45); }
   #toast.show { display:flex; }
   #toast b { color:#fff; }
   #toast button.undo { background:var(--accent); border:none; color:#fff; font-weight:600; }
-  #toast button.x { background:#39424f; border:none; color:var(--dim); padding:7px 10px; }
-  .staffrow .ev { opacity:.7; border-style:dashed; }
+  #toast button.x { background:var(--line); border:none; color:var(--dim); padding:7px 10px; }
+  .staffrow .ev { border-style:dashed; }
   .nocrop { height:120px; width:88px; display:flex; align-items:center; justify-content:center;
-            font-size:34px; background:#0a0d11; border:1px dashed var(--line); border-radius:8px; color:#3a4654; }
+            font-size:34px; background:var(--bg); border:1px dashed var(--line); border-radius:8px; color:var(--line); }
   .mini .nocrop { height:96px; width:76px; font-size:26px; }
   .modal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; z-index:40; }
   .modal.show { display:flex; }
-  .modalbox { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; min-width:300px; max-width:90vw; }
+  .modalbox { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; min-width:300px; width:min(92vw,860px); max-width:92vw; max-height:90vh; overflow-y:auto; overflow-x:hidden; }
   .modalbox h3 { font-size:15px; }
+  /* sticky header so ✕ close stays reachable while the body scrolls */
+  .modalhead { position:sticky; top:-18px; z-index:3; display:flex; justify-content:space-between; align-items:center; gap:10px; background:var(--card); margin:-18px -18px 12px; padding:14px 18px 10px; border-bottom:1px solid var(--line); }
   .emplist { display:flex; flex-direction:column; gap:6px; max-height:50vh; overflow:auto; }
-  .empbtn { text-align:left; background:#202732; display:flex; align-items:center; gap:8px; }
+  .empbtn { text-align:left; background:#eef1f6; display:flex; align-items:center; gap:8px; }
   .empbtn:hover { border-color:var(--ok); }
   .empbtn img { height:54px; width:40px; object-fit:cover; border-radius:5px; vertical-align:middle; }
-  .empbtn .empthumb { height:54px; width:40px; display:inline-flex; align-items:center; justify-content:center; background:#2a323d; border-radius:5px; font-size:22px; }
+  .empbtn .empthumb { height:54px; width:40px; display:inline-flex; align-items:center; justify-content:center; background:var(--line); border-radius:5px; font-size:22px; }
   .bigcrop { max-height:190px; max-width:100%; border-radius:8px; display:block; margin:0 auto 12px; border:2px solid var(--ok); }
   .lbox { position:fixed; inset:0; background:rgba(0,0,0,.9); display:none; align-items:center;
           justify-content:center; z-index:50; cursor:zoom-out; }
   .lbox.show { display:flex; }
   .lbox img { max-width:94vw; max-height:90vh; border-radius:10px; box-shadow:0 12px 50px rgba(0,0,0,.7); }
-  .lbox .cap { position:fixed; top:16px; left:50%; transform:translateX(-50%); color:#aab4c2; font-size:13px; }
+  .lbox .cap { position:fixed; top:16px; left:50%; transform:translateX(-50%); color:var(--dim); font-size:13px; }
   .sgrp { display:flex; gap:8px; flex-wrap:wrap; margin:7px 0; }
-  .sgrp figure { margin:0; text-align:center; }
+  .sgrp figure { margin:0; text-align:center; position:relative; }
   .sgrp img { height:88px; width:auto; max-width:84px; border-radius:6px; border:1px solid var(--line); }
   .sgrp figcaption { font-size:10px; color:var(--dim); margin-top:2px; white-space:nowrap; }
+  /* per-crop "not this person → pool" affordance in the PID drawer sightings grid */
+  .cropx { position:absolute; top:3px; right:3px; font-size:11px; line-height:1; padding:2px 5px; border-radius:5px; background:rgba(224,83,61,.92); color:#fff; border:none; cursor:pointer; opacity:0; transition:opacity .12s; }
+  .sgrp figure:hover .cropx { opacity:1; }
+  .cropx:hover { background:#c0392b; }
+  .cropxdone { position:absolute; top:3px; right:3px; font-size:9px; background:rgba(55,184,106,.9); color:#fff; padding:2px 5px; border-radius:5px; }
+  /* prominent per-PID training header at the top of the drawer */
+  .trainhdr { background:rgba(76,141,255,.07); border:1px solid rgba(76,141,255,.25); border-radius:8px; padding:8px 11px; margin:8px 0; font-size:13px; line-height:1.55; }
   .xtrack { padding:0 5px; font-size:11px; line-height:1.3; margin-left:5px; color:var(--no); border-color:var(--line); }
   .xtrack:hover { border-color:var(--no); background:rgba(224,83,61,.12); }
   .acard { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:9px 12px;
@@ -105,8 +116,8 @@
   .tlrow .nocrop { height:48px; width:36px; font-size:18px; }
   .mhead { display:flex; gap:16px; align-items:center; margin-bottom:14px; padding-bottom:12px; border-bottom:1px solid var(--line); }
   .mhead img { height:96px; width:auto; border-radius:8px; border:2px solid var(--accent); }
-  .mgrid { display:flex; flex-wrap:wrap; gap:10px; max-height:58vh; overflow:auto; }
-  .mcell { background:#0f141b; border:1px solid var(--line); border-radius:9px; padding:7px; text-align:center; width:122px; }
+  .mgrid { display:flex; flex-wrap:wrap; gap:10px; }
+  .mcell { background:var(--bg); border:1px solid var(--line); border-radius:9px; padding:7px; text-align:center; width:122px; }
   .mcell img { height:120px; width:auto; max-width:108px; border-radius:6px; }
   .mcell .lb { font-size:11px; color:var(--dim); margin:5px 0; }
   .tabs { display:flex; gap:6px; margin-bottom:14px; border-bottom:1px solid var(--line); }
@@ -125,23 +136,23 @@
   .dsel { position:absolute; top:5px; left:5px; z-index:3; width:17px; height:17px; cursor:pointer; accent-color:var(--accent); }
   .framebtn { position:absolute; top:3px; right:3px; z-index:3; padding:1px 5px; font-size:13px; line-height:1.5; background:rgba(0,0,0,.55); border:1px solid var(--line); border-radius:6px; cursor:pointer; }
   .framebtn:hover { border-color:var(--accent); }
-  .amenu button.parked { background:var(--warn); color:#1a1206; border-color:var(--warn); }
+  .amenu button.parked { background:var(--warn); color:#fff7e6; border-color:var(--warn); }
   .dcard.selected { outline:2px solid var(--accent); outline-offset:-1px; }
   .bulkbar { display:flex; align-items:center; gap:7px; flex-wrap:wrap; background:rgba(76,141,255,.13); border:1px solid var(--accent); border-radius:10px; padding:9px 13px; margin:10px 0; font-size:13px; position:sticky; top:6px; z-index:6; }
   .amenu { display:flex; gap:1px; justify-content:center; margin-top:5px; flex-wrap:wrap; }
   .amenu button { padding:2px 4px; font-size:13px; border-radius:6px; line-height:1.1; }
   .adone { font-size:11px; color:var(--ok); margin-top:4px; font-weight:600; }
-  .ev.resolved { opacity:.62; border-color:var(--ok); }
-  .amenu button.on { background:var(--accent); color:#08101e; border-color:var(--accent); }
+  .ev.resolved { border-color:var(--ok); background:#f3faf5; }   /* confirmed: green border + faint tint, NOT dimmed (dimming washes the crop white on a light bg) */
+  .amenu button.on { background:var(--accent); color:#eaf0fe; border-color:var(--accent); }
   .confirmbtn { margin-top:5px; width:100%; background:rgba(55,184,106,.18); border:1px solid var(--ok); color:var(--ok); border-radius:7px; padding:3px 0; font-size:12px; font-weight:600; cursor:pointer; }
-  .confirmbtn:hover { background:var(--ok); color:#06140b; }
+  .confirmbtn:hover { background:var(--ok); color:#e9f9ef; }
   .confallbtn { background:rgba(55,184,106,.16); border:1px solid var(--ok); color:var(--ok); border-radius:7px; padding:2px 9px; font-size:12px; cursor:pointer; margin-left:6px; }
   .dtag { font-size:11px; margin-top:4px; color:var(--dim); }
   .dtag.hold { color:var(--warn); font-weight:600; } .dtag.sugg { font-style:italic; }
   .stalehint { color:var(--warn); }
   .stalehint button { background:transparent; border:none; color:var(--accent); text-decoration:underline; cursor:pointer; padding:0 2px; font-size:13px; }
   .prog { font-size:13px; color:var(--ink); margin:2px 0 12px; }
-  .pbar { height:8px; background:#0a0d11; border-radius:5px; margin-top:6px; max-width:440px; overflow:hidden; }
+  .pbar { height:8px; background:var(--bg); border-radius:5px; margin-top:6px; max-width:440px; overflow:hidden; }
   .pbar i { display:block; height:100%; background:var(--ok); transition:width .3s; }
   .rephead { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
   .rtitle { font-size:19px; font-weight:650; }
@@ -157,10 +168,10 @@
   /* enhanced report */
   .cbadge { font-size:10px; font-weight:600; color:var(--ok); background:rgba(60,200,120,.12); border:1px solid rgba(60,200,120,.35); border-radius:8px; padding:1px 8px; vertical-align:middle; letter-spacing:.02em; }
   .reptable.mini2 { font-size:12px; max-width:420px; } .reptable.mini2 th,.reptable.mini2 td { padding:4px 8px; }
-  .rthumb { height:64px; width:48px; object-fit:cover; border-radius:6px; } .rthumb.nocrop { display:inline-flex; align-items:center; justify-content:center; background:#2a323d; font-size:20px; }
+  .rthumb { height:64px; width:48px; object-fit:cover; border-radius:6px; } .rthumb.nocrop { display:inline-flex; align-items:center; justify-content:center; background:var(--line); font-size:20px; }
   .fbar { display:flex; align-items:flex-end; gap:6px; height:110px; margin:6px 0 14px; padding:0 4px; }
   .fcol { display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:3px; }
-  .fbarfill { width:26px; background:linear-gradient(180deg,var(--ok),#2f7); border-radius:4px 4px 0 0; min-height:2px; }
+  .fbarfill { width:26px; background:linear-gradient(180deg,var(--ok),var(--ok)); border-radius:4px 4px 0 0; min-height:2px; }
   .flab { font-size:10px; color:var(--dim); } .fval { font-size:11px; color:var(--ink); font-weight:600; }
   .hotrow { display:flex; gap:10px; flex-wrap:wrap; margin:4px 0 16px; }
   .hotcell { margin:0; text-align:center; width:80px; } .hotcell figcaption { font-size:11px; color:var(--dim); margin-top:3px; }
@@ -169,8 +180,10 @@
   .ghead { font-size:14px; margin-bottom:8px; }
   .gmembers { display:flex; gap:12px; flex-wrap:wrap; } .gcell { margin:0; text-align:center; width:96px; } .gcell figcaption { font-size:10px; color:var(--dim); margin-top:4px; line-height:1.4; }
   .gthumb { height:104px; width:78px; object-fit:cover; border-radius:8px; border:1px solid var(--line); }
-  .gthumb.nocrop { display:inline-flex; align-items:center; justify-content:center; background:#2a323d; font-size:24px; }
+  .gthumb.nocrop { display:inline-flex; align-items:center; justify-content:center; background:var(--line); font-size:24px; }
   .demo { font-size:10px; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:0 5px; display:inline-block; margin:3px 0; letter-spacing:.02em; }
+  .cropdim { font-size:10px; color:var(--dim); font-variant-numeric:tabular-nums; letter-spacing:.02em; opacity:.85; }
+  .cropdim:not(:empty) { background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:0 5px; display:inline-block; margin:2px 0; }
   .inside-now { color:var(--warn); font-weight:600; }
   /* 3-part review layout */
   .reconline { font-size:12px; color:var(--dim); background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 13px; margin-bottom:14px; }
@@ -186,15 +199,71 @@
   .e2row { display:flex; gap:12px; flex-wrap:wrap; }
   .e2cell { margin:0; text-align:center; width:96px; }
   .e2cell figcaption { font-size:10px; color:var(--dim); margin-top:4px; line-height:1.4; }
-  .staffcard > summary { display:flex; align-items:center; gap:7px; flex-wrap:wrap; font-size:13px; }
+  .staffcard > summary, .custcard > summary { display:flex; align-items:center; gap:7px; flex-wrap:wrap; font-size:13px; }
+  .groupcard > summary { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:13px; font-weight:600; color:var(--ink); }
+  .groupcard { background:rgba(127,127,127,.04); }
+  .groupcard .custcard { margin:8px 0 8px 10px; border-left:2px solid var(--accent); }
+  /* Phase 1c — HITL de-dup suggestions + L4 exit chips */
+  .handoffbox { background:#fff8ec; border:1px solid var(--warn); border-radius:8px; padding:8px 10px; margin:0 0 10px; }
+  .handoffbox h4 { margin:0 0 4px; font-size:12px; color:#92600a; font-weight:600; }
+  .dupe-pair { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:6px 0; border-top:1px dashed var(--line); }
+  .dupe-pair:first-of-type { border-top:none; }
+  .dupe-pair img { width:42px; height:64px; object-fit:cover; border-radius:4px; border:1px solid var(--line); cursor:zoom-in; }
+  .dupe-pair .vs { color:var(--dim); font-size:12px; }
+  .dupe-pair .gap { color:var(--dim); font-size:11px; margin-left:auto; }
+  .dupe-pair button { font-size:11px; padding:3px 9px; }
+  .chip-infer { display:inline-block; font-size:10px; padding:1px 6px; border-radius:9px; background:#fff3cd; color:#92600a; border:1px solid var(--warn); }
+  .chip-ok { display:inline-block; font-size:10px; padding:1px 6px; border-radius:9px; background:#eaf7ef; color:var(--ok); border:1px solid var(--ok); }
+  .miniconfirm { font-size:10px; padding:1px 7px; margin-left:4px; }
+  /* Phase 3 — per-PID detail drawer */
+  .pidmore { margin-left:6px; font-size:11px; }
+  .lcbox { background:rgba(127,127,127,.05); border:1px solid var(--line); border-radius:8px; padding:8px 11px; margin-bottom:8px; }
+  .lcrow { font-size:13px; padding:3px 0; line-height:1.5; }
+  .lctag { display:inline-block; min-width:84px; font-weight:600; color:var(--accent); font-size:11px; text-transform:uppercase; letter-spacing:.02em; }
+  /* check-in / check-out proof crops on every card */
+  .proofpair { display:inline-flex; align-items:center; gap:6px; vertical-align:middle; }
+  .pp-cell { margin:0; text-align:center; width:48px; }
+  .pp-cell .ppimg { width:46px; height:68px; object-fit:cover; border-radius:5px; border:1px solid var(--line); cursor:zoom-in; display:block; }
+  .pp-cell .ppimg.nocrop { display:flex; align-items:center; justify-content:center; background:var(--line); font-size:18px; }
+  .pp-cell figcaption { font-size:9px; color:var(--dim); margin-top:2px; line-height:1.3; white-space:nowrap; }
+  .pp-arrow { color:var(--dim); font-size:13px; }
+  /* ReID trainer — PID album gallery (Training tab) */
+  .albumgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(116px,1fr)); gap:12px; margin:8px 0 18px; }
+  .albumcover { margin:0; cursor:pointer; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:6px; transition:transform .08s ease, box-shadow .08s ease; }
+  .albumcover:hover { transform:translateY(-2px); box-shadow:0 4px 14px rgba(0,0,0,.10); }
+  .albumcover .albimg { width:100%; height:148px; object-fit:cover; border-radius:7px; display:block; background:var(--line); }
+  .albumcover .albimg.nocrop { display:flex; align-items:center; justify-content:center; font-size:32px; }
+  .albumcover figcaption { font-size:11px; margin-top:6px; text-align:center; line-height:1.55; }
+  .albumcover.staff { border-left:3px solid #7c3aed; }
+  .albumcover.customer { border-left:3px solid var(--ok); }
+  .reidctl { margin:2px 0 10px; font-size:13px; }
+  .reidctl input[type=range] { vertical-align:middle; width:170px; accent-color:var(--accent); }
+  /* collapsible sections inside the ReID Trainer (Mark&Train · Look-alikes · My markings) */
+  .reidsec { border:1px solid var(--line); border-radius:9px; margin:8px 0; background:rgba(127,127,127,.03); }
+  .reidsec > summary { cursor:pointer; padding:9px 12px; font-size:14px; list-style:none; user-select:none; }
+  .reidsec > summary::-webkit-details-marker { display:none; }
+  .reidsec > summary::before { content:'▸'; display:inline-block; margin-right:7px; color:var(--dim); transition:transform .12s; }
+  .reidsec[open] > summary::before { transform:rotate(90deg); }
+  .reidsec > .reidsecbody { padding:2px 12px 12px; }
+  .markrow { display:flex; align-items:center; gap:6px; padding:4px 6px; border-radius:6px; }
+  .markrow:hover { background:rgba(127,127,127,.06); }
+  .dupe-pair.reid img { width:52px; height:78px; }
+  .impactgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; margin:8px 0 4px; }
+  .impactgrid > div { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 10px; text-align:center; }
+  .impactgrid > div b { font-size:16px; color:var(--ink); }
+  .logcard { background:rgba(127,127,127,.04); border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:0 0 12px; }
+  .loghead { font-size:13px; margin-bottom:6px; line-height:1.5; }
+  .custtbl { width:100%; }
+  .custtbl th, .custtbl td { vertical-align:middle; text-align:left; padding:5px 9px; white-space:nowrap; }
+  .custtbl .staffthumb { height:50px; width:40px; cursor:zoom-in; }
   .staffthumb { height:44px; width:36px; object-fit:cover; border-radius:5px; border:1px solid var(--line); vertical-align:middle; }
-  .staffthumb.nocrop { display:inline-flex; align-items:center; justify-content:center; background:#2a323d; font-size:16px; }
+  .staffthumb.nocrop { display:inline-flex; align-items:center; justify-content:center; background:var(--line); font-size:16px; }
   .marquee { position:fixed; border:1px solid var(--accent); background:rgba(76,141,255,.12); pointer-events:none; z-index:60; border-radius:3px; }
   .dcard.marq-hit { outline:2px solid var(--accent); outline-offset:-1px; }
   #dets { user-select:none; } #dets img { -webkit-user-drag:none; user-drag:none; }
   .stafflist { display:flex; flex-direction:column; gap:12px; }
   .scard { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
-  .shead { display:flex; align-items:center; gap:12px; margin-bottom:10px; } .sthumb { height:72px; width:54px; object-fit:cover; border-radius:7px; } .sthumb.nocrop { display:inline-flex; align-items:center; justify-content:center; background:#2a323d; font-size:22px; }
+  .shead { display:flex; align-items:center; gap:12px; margin-bottom:10px; } .sthumb { height:72px; width:54px; object-fit:cover; border-radius:7px; } .sthumb.nocrop { display:inline-flex; align-items:center; justify-content:center; background:var(--line); font-size:22px; }
   .hourrep { background:rgba(76,141,255,.05); border:1px solid var(--line); border-radius:14px; padding:14px 18px; margin-bottom:18px; } .hourrep h2 { margin-top:16px; font-size:15px; } .hourrep h3 { font-size:13px; }
   .trainacts { display:flex; gap:9px; flex-wrap:wrap; margin:4px 0 14px; }
   .chips { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:6px; }
@@ -211,15 +280,19 @@
   .pidbadge { display:inline-block; font-size:10px; font-weight:700; border-radius:6px; padding:1px 6px; margin-left:5px; vertical-align:middle; letter-spacing:.02em; }
   .pidbadge.staff { background:rgba(76,141,255,.16); color:var(--accent); border:1px solid rgba(76,141,255,.4); }
   .pidbadge.cust  { background:rgba(55,184,106,.14); color:var(--ok); border:1px solid rgba(55,184,106,.35); }
-  .pidbadge.grp   { background:rgba(168,130,255,.16); color:#a882ff; border:1px solid rgba(168,130,255,.4); }
+  .pidbadge.grp   { background:rgba(168,130,255,.16); color:#7c3aed; border:1px solid rgba(168,130,255,.4); }
   .pidbadge.weak  { background:rgba(227,160,43,.16); color:var(--warn); border:1px solid rgba(227,160,43,.45); }
-  .mcell.weak { border:1px dashed var(--warn); opacity:.85; }
-  .tfbar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 12px; margin-bottom:14px; font-size:13px; color:var(--dim); }
-  .tfbar input[type=time] { width:108px; }
+  .pidbadge.una   { background:rgba(120,120,120,.14); color:var(--mut,#6b7280); border:1px solid rgba(120,120,120,.4); }
+  .pidbadge.reason{ background:rgba(227,160,43,.14); color:var(--warn); border:1px solid rgba(227,160,43,.4); text-transform:capitalize; }
+  .srctag { font-size:10px; opacity:.85; cursor:help; }
+  .srctag.human { filter:saturate(1.2); }
+  .l2badge { font-size:11px; cursor:help; margin-left:3px; vertical-align:middle; }
+  .mcell.weak { border:1px dashed var(--warn); }
   .divider { border:none; border-top:1px solid var(--line); margin:34px 0 4px; }
 </style>
 </head>
 <body>
+<script>if(new URLSearchParams(location.search).get('embed'))document.body.classList.add('embed');</script>
 <header>
   <h1>🛍️ Showroom · Review</h1>
   <select id="win" onchange="load()"></select>
@@ -232,6 +305,9 @@
     <button class="tab active" onclick="showTab('review',this)">📋 Review</button>
     <button class="tab" onclick="showTab('report',this)">📊 Report</button>
     <button class="tab" onclick="showTab('train',this)">🧠 Training</button>
+    <button class="tab" onclick="showTab('reid',this)">🪪 ReID</button>
+    <button class="tab" onclick="showTab('logs',this)">📈 Logs</button>
+    <button class="tab" onclick="showTab('staff',this)">👥 Staff</button>
   </div>
   <div id="tab-review">
   <div id="reconLine" class="reconline"></div>
@@ -244,33 +320,18 @@
   <details class="rsec" data-persist="sec-e2" open>
     <summary class="rsechead">🚪 E2 Tracker — entry → exit journeys <span class="hint">(customers + staff · = the All-Detections groups, 1:1)</span></summary>
     <div class="rsecbody">
-      <div id="e2journeys"></div>
-      <div class="tfbar" style="display:none">⏱ time slice: <input type="time" id="tfrom" step="60" onchange="setTimeF('from',this.value)"> – <input type="time" id="tto" step="60" onchange="setTimeF('to',this.value)"> <span id="tfclear"></span><span class="hint" style="margin-left:auto">narrow the whole-day results to a sub-range (a single hour is already its own slice)</span></div>
-      <div id="linkbar" class="linkbar">
-        <span>Linking: <b id="linkInfo"></b></span>
-        <button class="ok" onclick="doLink()">Link as one visit ✓</button>
-        <button onclick="clearSel()">Cancel</button>
-      </div>
+      <details class="subblk" data-persist="e2-customers" open>
+        <summary>🛍️ Customers this window <span class="hint">— each #C entry → exit · #G groups · + unassigned (removed by HITL) · ✋/🤖</span></summary>
+        <div id="e2journeys"></div>
+        <div id="linkbar" class="linkbar">
+          <span>Linking: <b id="linkInfo"></b></span>
+          <button class="ok" onclick="doLink()">Link as one visit ✓</button>
+          <button onclick="clearSel()">Cancel</button>
+        </div>
+      </details>
       <details class="subblk" data-persist="e2-staff" open>
         <summary>👥 Staff this window <span class="hint">— each #S, in → out · hidden from customer counts · ✋/🤖</span></summary>
         <div class="mini staffrow" id="staff"></div>
-      </details>
-      <details class="subblk" data-persist="e2-entries">
-        <summary>🚪 Entries — everyone who crossed the door, by time (L2)</summary>
-        <div class="mini" id="entries"></div>
-      </details>
-      <details class="subblk" data-persist="e2-visits">
-        <summary>🔗 Visits — matched entry → exit (L4) · review the uncertain ones first</summary>
-        <div id="visits"></div>
-      </details>
-      <details class="subblk" data-persist="e2-open">
-        <summary>⏱ Still inside at window end</summary>
-        <div class="mini" id="open"></div>
-      </details>
-      <details class="subblk" data-persist="e2-pre">
-        <summary>↩ Exited but entered before the window</summary>
-        <div class="mini" id="pre"></div>
-        <p class="hint" style="margin-top:8px">Tip: click one “still inside” + one “pre-window exit” to link them into a recovered visit. Every action can be undone.</p>
       </details>
     </div>
   </details>
@@ -285,6 +346,9 @@
   </div><!-- /tab-review -->
   <div id="tab-report" style="display:none"><div id="report"></div></div>
   <div id="tab-train" style="display:none"><div id="train"></div></div>
+  <div id="tab-reid" style="display:none"><div id="reid"></div></div>
+  <div id="tab-logs" style="display:none"><div id="logs"></div></div>
+  <div id="tab-staff" style="display:none"><div id="staffTab"></div></div>
 </main>
 <div id="toast"><b id="toastMsg"></b><button class="undo" onclick="undoLast()">↩ Undo</button><button class="x" onclick="hideToast()">✕</button></div>
 <div id="lightbox" class="lbox" onclick="closeZoom()"><div class="cap">click anywhere or press Esc to close</div><img id="lbimg"></div>
@@ -297,12 +361,19 @@
     <button onclick="closeStaff()">Cancel</button>
   </div>
 </div></div>
-<div id="matchModal" class="modal"><div class="modalbox" style="max-width:720px">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+<div id="matchModal" class="modal"><div class="modalbox">
+  <div class="modalhead">
     <h3 style="margin:0">Confirm matches — is every face the same person?</h3>
     <button onclick="closeMatches()">✕ close</button>
   </div>
   <div id="matchBody"></div>
+</div></div>
+<div id="pidModal" class="modal" onclick="if(event.target===this)closePid()"><div class="modalbox">
+  <div class="modalhead">
+    <h3 style="margin:0" id="pidTitle">PID</h3>
+    <button onclick="closePid()">✕ close</button>
+  </div>
+  <div id="pidBody"></div>
 </div></div>
 <script>
 const $ = s => document.querySelector(s);
@@ -316,22 +387,52 @@ function restoreOpen(root){ (root||document).querySelectorAll('details[data-pers
 addEventListener('beforeunload', ()=>LS.set('scrollY', Math.round(window.scrollY||0)));
 function restoreScroll(){ const y=LS.get('scrollY',0); if(y) [450,1000].forEach(ms=>setTimeout(()=>window.scrollTo(0,y), ms)); }   // retry: content loads async
 // faces are hidden only when the server says so (unprotected public view); a password unhides them
-const cropImg = p => HIDE ? '<div class="nocrop" title="face hidden on this view">👤</div>' : `<img src="${cropURL(p)}" onclick="event.stopPropagation();zoom('${p}')" style="cursor:zoom-in" title="click to enlarge">`;
+const cropImg = p => HIDE ? '<div class="nocrop" title="face hidden on this view">👤</div>' : `<img src="${cropURL(p)}" loading="lazy" decoding="async" onload="setDim(this)" onclick="event.stopPropagation();zoom('${p}')" style="cursor:zoom-in" title="click to enlarge">`;
+function setDim(img){   // stamp the crop's true pixel w×h into the card's .cropdim label, once the image loads (no backend cost; works in day view too)
+  try{ const b = img.parentElement && img.parentElement.querySelector('.cropdim');
+       if (b && img.naturalWidth) b.textContent = img.naturalWidth + '×' + img.naturalHeight + 'px'; }catch(e){}
+}
+function proofPair(c){   // compulsory check-in + check-out crops as proof (customers AND staff)
+  const isStaff = String(c.pid||'')[0]==='S';
+  const fv = c.floor_visits;
+  const inTime = c.in_ist || c.first_ist || (fv&&fv[0]&&fv[0].in) || '—';
+  const img = crop => (crop&&!HIDE)?`<img class="ppimg" src="${cropURL(crop)}" loading="lazy" decoding="async" onclick="event.preventDefault();event.stopPropagation();zoom('${crop}')">`:'<div class="ppimg nocrop">👤</div>';
+  const cell = (crop,cap) => `<figure class="pp-cell">${img(crop)}<figcaption>${cap}</figcaption></figure>`;
+  const inCell = cell(c.in_crop, `📥 <b>${inTime}</b>`);
+  let outCell;
+  if (c.out_crop){
+    const ot = c.out_ist || (fv&&fv.length&&fv[fv.length-1].out) || c.last_ist || '—';
+    outCell = cell(c.out_crop, `📤 <b>${ot}</b>`);
+  } else if (isStaff){
+    outCell = `<figure class="pp-cell"><div class="ppimg nocrop">⏱</div><figcaption><span class="inside-now">still inside</span></figcaption></figure>`;
+  } else {
+    outCell = cell(c.last_crop, `👁 <b>${c.last_ist||c.out_ist||'—'}</b> <span class="chip-infer">inferred</span>`);
+  }
+  return `<span class="proofpair">${inCell}<span class="pp-arrow">→</span>${outCell}</span>`;
+}
 function pidTag(d){   // anchor chips: S# (staff daily rank), C# (customer by arrival) + G# (arrival group) — same tags everywhere
   if(!d || !d.pid) return '';
   const isS = String(d.pid)[0]==='S';
   const main = `<span class="pidbadge ${isS?'staff':'cust'}${(isS&&d.weak_staff)?' weak':''}" title="${isS?'staff id (S# = daily rank) — trace this person everywhere':'customer # for the day, by arrival order'}">#${d.pid}${(isS&&d.weak_staff)?' ⚠':''}</span>`;
   const grp = d.group ? `<span class="pidbadge grp" title="arrival group">#${d.group}</span>` : '';
-  return main + grp;
+  // a CUSTOMER door crossing that also hit the staff gallery in the weak band (sim 0.6–0.72) -> likely an
+  // employee misfiled as a customer. Flag it so the human can pick it and 👤-tag it staff in one click.
+  const weak = (d.weak_staff && !isS) ? ` <span class="pidbadge weak" title="weak staff match (gallery sim 0.6–0.72) — probably an employee; use the 👤 Staff button to move them">⚠ staff?</span>` : '';
+  return main + grp + weak;
 }
 
+function srcTag(src){   // provenance chip on every crop: ✋ = a human added/confirmed it · 🤖 = the pipeline auto-found it
+  return src==='human'
+    ? '<span class="srctag human" title="added or confirmed by a human (HITL)">✋</span>'
+    : '<span class="srctag ai" title="auto-detected by the pipeline (no human touch)">🤖</span>';
+}
 function zoom(p){ if(HIDE||!p) return; $('#lbimg').src = cropURL(p); $('#lightbox').classList.add('show'); }
 function showFrame(window,camera,track){   // full source frame + trajectory, for the enter-vs-passby call
   $('#lbimg').src = `/api/hitl/frame?window=${encodeURIComponent(window)}&camera=${camera}&track=${track}`;
   $('#lightbox').classList.add('show');
 }
 function closeZoom(){ $('#lightbox').classList.remove('show'); }
-document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeZoom(); closeStaff(); closeMatches(); } });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeZoom(); closeStaff(); closeMatches(); closePid(); } });
 
 async function loadWindows() {
   const r = await fetch('/api/hitl/windows').then(r=>r.json());
@@ -339,19 +440,19 @@ async function loadWindows() {
   if (RO) { document.querySelector('header h1').innerHTML = '🛍️ Showroom · Live Results <span style="font-size:11px;color:var(--dim)">(read-only)</span>'; }
   const sel = $('#win');
   const dates = [...new Set(r.windows.map(w=>String(w.window).split('_')[0]).filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(x)))].sort();
+  const dated = r.windows.filter(w=>/^\d{4}-\d{2}-\d{2}_\d/.test(w.window)); // real processed hours — hides L4_hitl_test & non-date stubs
   sel.innerHTML = dates.map(dt=>`<option value="${dt}">📅 Whole day · ${dt}</option>`).join('')
-                + r.windows.map(w=>`<option value="${w.window}">${w.range || w.window} · ${w.visits} visits</option>`).join('');
+                + dated.map(w=>`<option value="${w.window}">${w.range || w.window} · ${w.visits} visits</option>`).join('');
   if (r.windows.length) {
-    const dated = r.windows.filter(w=>/^\d{4}-\d{2}-\d{2}_\d/.test(w.window)); // real processed hours
     const pool = dated.length ? dated : r.windows;
     const best = pool.reduce((a,b)=>(b.visits||0)>(a.visits||0)?b:a, pool[0]);
-    if (!WIN || (!r.windows.some(w=>w.window===WIN) && !dates.includes(WIN))) WIN = best.window; // keep selection (incl. a whole-day pick)
+    if (!WIN || (!dated.some(w=>w.window===WIN) && !dates.includes(WIN))) WIN = best.window; // keep selection (incl. a whole-day pick); reset stale non-date picks
     sel.value = WIN; load();
     if (!TAB_RESTORED){ TAB_RESTORED = true;                                       // pick the tab from the URL path (/report, /train) else last-used
       const seg=(location.pathname.replace(/\/+$/,'').split('/').pop()||'').toLowerCase();
-      const fromPath={report:'report',reports:'report',train:'train',training:'train',review:'review'}[seg];
+      const fromPath={report:'report',reports:'report',train:'train',training:'train',reid:'reid',logs:'logs',staff:'staff',review:'review'}[seg];
       showTab(fromPath || LS.get('tab','review')); }
-  } else $('#visits').innerHTML = '<p class="empty">No processed windows yet.</p>';
+  } else $('#e2journeys').innerHTML = '<p class="empty">No processed windows yet.</p>';
 }
 let autoTimer = null;
 function toggleAuto(){
@@ -373,62 +474,39 @@ async function load(){
   WIN = $('#win').value || WIN;
   LS.set('win', WIN);                       // remember the chosen view across refreshes
   DAY = /^\d{4}-\d{2}-\d{2}$/.test(WIN);   // a date (no _HHMM) = whole-day rollup
-  if (DAY && !document.querySelector('#visits .card')) $('#visits').innerHTML = '<p class="hint">aggregating the whole day…</p>';
   REV = await fetch(DAY ? `/api/hitl/visits-day/${WIN}` : `/api/hitl/visits/${WIN}`).then(r=>r.json());
   renderReview();
   loadAttendance();
   loadHourReport();                          // per-hour report pinned at the top of review (cleared in whole-day mode)
   if (DETS_WIN !== WIN){ DETS_WIN = WIN; loadDetections(); }   // detections now live at the bottom of THIS tab
+  if ($('#tab-reid') && $('#tab-reid').style.display !== 'none'){ ALBUM_CAP = 30; loadReid(); }   // refresh albums if on the ReID tab
 }
 function renderReview(){
   const d = REV; if (!d) return;
-  $('.tfbar').style.display = DAY ? 'flex' : 'none';   // hide the redundant time slice on a single-hour window
-  $('#tfrom').value = DETF.from||''; $('#tto').value = DETF.to||'';
-  $('#tfclear').innerHTML = (DETF.from||DETF.to) ? `<button onclick="clearTimeF()">clear</button>` : '';
   $('#metrics').innerHTML = metricsHTML(d.metrics||{});
-  // visit cards (scoped to the time slice)
-  $('#visits').innerHTML = (d.visits||[]).filter(v=>inTimeRange(v.in_ist)).map(v=>{
-    const cls = v.label==='confirm'?'confirm':v.label==='reject'?'reject':(v.status==='needs_review'?'review':'');
-    const tag = v.label ? `<span class="tag done">${v.label==='confirm'?'confirmed':v.label}</span>`
-                        : `<span class="tag ${v.status==='needs_review'?'review':'auto'}">${v.status==='needs_review'?'needs review':'auto'}</span>`;
-    return `<div class="card ${cls}">
-      <div class="crops">
-        <figure>${cropImg(v.in_crop)}<figcaption>IN</figcaption></figure>
-        <figure>${cropImg(v.out_crop)}<figcaption>OUT</figcaption></figure>
-      </div>
-      <div class="meta">
-        <div class="when">${v.in_ist} → ${v.out_ist} · ${Math.round(v.dwell_s)}s</div>
-        <div class="how">${v.how}</div>
-        <div class="bar"><i style="width:${Math.round((v.confidence||0)*100)}%"></i></div>
-        ${tag}
-      </div>
-      ${RO ? '' : `<div class="btns">
-        <button class="ok" onclick="label('${v.id}','confirm',${v.in_track},${v.out_track},'${v.window||''}')">✓ Same person</button>
-        <button class="no" onclick="label('${v.id}','reject',${v.in_track},${v.out_track},'${v.window||''}')">✗ Wrong match</button>
-        <button onclick="openStaffPicker('${v.id}',${v.in_track},'${v.in_crop}',null,'${v.window||''}')">👤 Staff</button>
-      </div>`}
-      ${DAY && v.window ? `<div class="winbadge">${v.window.split('_')[1]||v.window}</div>` : ''}
-    </div>`;
-  }).join('') || '<p class="empty">No matched visits.</p>';
-  // unmatched events (scoped to the time slice)
-  $('#open').innerHTML = (d.open_sessions||[]).filter(e=>inTimeRange(e.ist)).map(e=>evHTML('open',e)).join('') || '<p class="empty">none</p>';
-  $('#pre').innerHTML  = (d.pre_window_exits||[]).filter(e=>inTimeRange(e.ist)).map(e=>evHTML('pre',e)).join('') || '<p class="empty">none</p>';
-  renderStaff();
-  $('#entries').innerHTML = (d.entries||[]).filter(e=>inTimeRange(e.ist)).map(entryHTML).join('') || '<p class="empty">no door entries yet in this window</p>';
+  renderStaff();        // entries/visits/still-inside/pre-window-exit lists removed -- superseded by the customer cards + day-level exits (L3/L4)
   renderLinkbar();
 }
 function showTab(name, btn){
   if (!$('#tab-'+name)) name = 'review';    // stale/removed tab (e.g. old 'dets') -> Review
   if (!btn) btn = [...document.querySelectorAll('.tab')].find(t=>(t.getAttribute('onclick')||'').includes("'"+name+"'"));
   LS.set('tab', name);                      // remember the active tab across refreshes
-  try { history.replaceState(null, '', '/'+name); } catch(e){}   // keep the URL shareable: /review, /report, /train
+  // keep the tab in the URL; PRESERVE ?embed=1 when running inside the Vision Portal iframe, so an
+  // iframe reload stays embedded (a bare /report would otherwise redirect back into the portal -> loop).
+  try { history.replaceState(null, '', '/'+name+(document.body.classList.contains('embed')?'?embed=1':'')); } catch(e){}
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   if (btn) btn.classList.add('active');
   $('#tab-review').style.display = name==='review' ? '' : 'none';
   $('#tab-report').style.display = name==='report' ? '' : 'none';
   $('#tab-train').style.display  = name==='train'  ? '' : 'none';
+  $('#tab-reid').style.display   = name==='reid'   ? '' : 'none';
+  $('#tab-logs').style.display   = name==='logs'   ? '' : 'none';
+  $('#tab-staff').style.display  = name==='staff'  ? '' : 'none';
   if (name==='report') loadReport();
   if (name==='train') loadTraining();
+  if (name==='reid') loadReid();
+  if (name==='logs') loadLogs();
+  if (name==='staff') loadStaff();
 }
 function reportHTML(r){   // the report BODY (KPIs -> footfall -> dwell/hot-leads -> groups -> staff); shared by the Report tab + each hour's review
   const c=r.customers||{}, g=c.groups||{}, e=r.employees||{}, dw=c.dwell_min||{};
@@ -438,12 +516,27 @@ function reportHTML(r){   // the report BODY (KPIs -> footfall -> dwell/hot-lead
   const mins = s => s ? Math.round(s/60)+'m' : '—';
   const maxF = Math.max(1, ...fbh.map(x=>x.entries));
   const badge = t => `<span class="cbadge">${t}</span>`;
+  const secDiff = (a,b) => { const p=t=>{const x=String(t||'').split(':').map(Number); return x.length===3?x[0]*3600+x[1]*60+x[2]:NaN;}; const d=p(b)-p(a); return isNaN(d)?null:Math.max(0,Math.round(d/6)/10); };
+  const scards = (REV && REV.staff_cards) || null;        // 100% sync with the E2 staff panel (the SAME _cards_from_dets data)
+  let staffHTML;
+  if (scards) {
+    const named = scards.filter(s => s.pid && s.pid!=='S?' && s.employee_id);   // report = ASSIGNED staff only (skip unassigned S?)
+    staffHTML = named.map(s=>{
+      const fvl=s.floor_visits||[];
+      const span = fvl.length?`${fvl[0].in||'—'} → ${fvl[fvl.length-1].out||'still in'}`:'';
+      const onfloor = fvl.reduce((t,v)=>t+(v.out?(secDiff(v.in,v.out)||0):0),0);
+      const rows = fvl.length ? fvl.map(v=>{const dw=v.out?secDiff(v.in,v.out):null; return `<tr><td>${v.in||'—'}</td><td>${v.out||'<span class="inside-now">still in</span>'}</td><td>${dw!=null?dw+'m':'—'}</td></tr>`;}).join('') : '<tr><td colspan="3" class="hint">interior only — no door crossing</td></tr>';
+      return `<div class="scard"><div class="shead">${thumb(s.best_crop,'sthumb')}<div><b><span class="pidbadge staff">#${s.pid}</span>${s.name?' · '+s.name:''}</b><br><span class="hint">${(s.n_visits||fvl.length)} floor-visit${(s.n_visits||fvl.length)!==1?'s':''}${span?' · '+span:''} · ${Math.round(onfloor*10)/10}m on floor · ${s.n_sightings||0} sighting${(s.n_sightings||0)!==1?'s':''}</span></div></div>
+        <table class="reptable mini2"><thead><tr><th>check-in</th><th>check-out</th><th>dwell</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    }).join('') || '<p class="empty">no assigned staff (name the S? cards in the E2 panel)</p>';
+  } else {
+    staffHTML = sd.map(s=>`<div class="scard"><div class="shead">${thumb(s.crop,'sthumb')}<div><b>${s.code||''}${s.pid?` <span class="pidbadge staff">#${s.pid}</span>`:''}${s.name?' · '+s.name:''}</b><br><span class="hint">${s.first_in||'—'} → ${s.last_out||'—'} · ${s.total_dwell_min}m on floor · ${s.span_min}m span</span></div></div>
+      <table class="reptable mini2"><thead><tr><th>hour</th><th>in</th><th>out</th><th>dwell</th></tr></thead><tbody>${(s.sightings||[]).map(t=>`<tr><td>${hrf(t.window)}</td><td>${t.in||'—'}</td><td>${t.out||'—'}</td><td>${t.dwell_min}m</td></tr>`).join('')}</tbody></table></div>`).join('')||'<p class="empty">no staff enrolled yet</p>';
+  }
   return `
     <h2>At a glance ${badge('high confidence')}</h2>
     <div class="repcards">
       <div class="repcard"><div class="big">${k.footfall??c.unique_customers??0}</div>footfall <span class="hint">unique entries</span></div>
-      <div class="repcard"><div class="big">${k.capture_rate!=null?(k.capture_rate+'<span class="u">%</span>'):'—'}</div>capture rate <span class="hint">${k.passersby??0} walked past</span></div>
-      <div class="repcard"><div class="big">${k.peak_occupancy??'—'}</div>peak inside at once</div>
       <div class="repcard"><div class="big">${k.avg_dwell_min??dw.mean??'—'}<span class="u">min</span></div>avg dwell <span class="hint">median ${dw.median??'—'}</span></div>
       <div class="repcard"><div class="big">${g.grouped??0}</div>arrived in groups <span class="hint">${g.solo??0} solo</span></div>
       <div class="repcard"><div class="big">${k.staff_on_duty??e.headcount??0}</div>staff on duty</div>
@@ -458,10 +551,19 @@ function reportHTML(r){   // the report BODY (KPIs -> footfall -> dwell/hot-lead
     ${hot.length?`<h3>🔥 Hot leads — longest dwell <span class="hint">(your follow-up list)</span></h3><div class="hotrow">${hot.map(h=>`<figure class="hotcell">${thumb(h.crop)}<figcaption><b>${mins(h.dwell_s)}</b>${h.pid?` <span class="pidbadge cust">#${h.pid}</span>`:''}${h.group?`<span class="pidbadge grp">#${h.group}</span>`:''}${h.demo?`<div class="demo">${h.demo}</div>`:''}<br>${hrf(h.window)} · in ${h.in_ist||'—'}</figcaption></figure>`).join('')}</div>`:''}
     <h2>Customers by group ${badge('high confidence')} <span class="hint">grouped by arrival time</span></h2>
     <div class="grouplist">${grps.map(gr=>`<div class="gcard"><div class="ghead"><b>Group ${gr.group_id}</b> · ${gr.size} ${gr.size>1?'people':'person'} <span class="hint">— ${gr.reason}</span></div>
-      <div class="gmembers">${gr.members.map(m=>`<figure class="gcell">${thumb(m.crop,'gthumb')}<figcaption>${m.pid?`<span class="pidbadge cust">#${m.pid}</span>`:''}${m.group?`<span class="pidbadge grp">#${m.group}</span>`:''}${m.demo?`<div class="demo">${m.demo}</div>`:''}<div>${m.in_ist||'—'}${m.out_ist?' → '+m.out_ist:''}</div><span class="${m.dwell_s?'hint':'inside-now'}">${m.dwell_s?mins(m.dwell_s)+' dwell':'⏱ still inside'}</span></figcaption></figure>`).join('')}</div></div>`).join('')||'<p class="empty">no customers yet</p>'}</div>
-    <h2>Staff — time in / out</h2>
-    <div class="stafflist">${sd.map(s=>`<div class="scard"><div class="shead">${thumb(s.crop,'sthumb')}<div><b>${s.code||''}${s.pid?` <span class="pidbadge staff">#${s.pid}</span>`:''}${s.name?' · '+s.name:''}</b><br><span class="hint">${s.first_in||'—'} → ${s.last_out||'—'} · ${s.total_dwell_min}m on floor · ${s.span_min}m span</span></div></div>
-      <table class="reptable mini2"><thead><tr><th>hour</th><th>in</th><th>out</th><th>dwell</th></tr></thead><tbody>${(s.sightings||[]).map(t=>`<tr><td>${hrf(t.window)}</td><td>${t.in||'—'}</td><td>${t.out||'—'}</td><td>${t.dwell_min}m</td></tr>`).join('')}</tbody></table></div>`).join('')||'<p class="empty">no staff enrolled yet</p>'}</div>`;
+      <table class="reptable custtbl"><thead><tr><th>group</th><th>customer</th><th>check-in</th><th>check-out</th><th>in</th><th>out</th><th>dwell</th><th>age</th><th>gender</th></tr></thead>
+      <tbody>${gr.members.map(m=>{const dp=(m.demo||'').split('·').map(s=>s.trim());const age=dp[0]||'';const gen=dp[1]||'';const ph='<span class="hint">—</span>';const card=((REV&&REV.customer_cards)||[]).find(x=>x.pid===m.pid)||m;return `<tr>
+        <td><span class="pidbadge grp">#${m.group||('G'+gr.group_id)}</span></td>
+        <td><span class="pidbadge cust">#${m.pid}</span></td>
+        <td>${thumb(card.in_crop||m.crop,'staffthumb')}</td>
+        <td>${card.out_crop?thumb(card.out_crop,'staffthumb'):(card.last_crop?`${thumb(card.last_crop,'staffthumb')}<br><span class="chip-infer">inferred</span>`:ph)}</td>
+        <td>${m.in_ist||'—'}</td>
+        <td>${m.out_ist||'<span class="inside-now">still in</span>'}</td>
+        <td>${m.dwell_s?mins(m.dwell_s):'—'}</td>
+        <td>${age||ph}</td>
+        <td>${gen||ph}</td></tr>`;}).join('')}</tbody></table></div>`).join('')||'<p class="empty">no customers yet</p>'}</div>
+    <h2>Staff — time in / out ${badge('high confidence')} <span class="hint">every door check-in/out · = E2 staff panel (assigned only)</span></h2>
+    <div class="stafflist">${staffHTML}</div>`;
 }
 let _hrSeq = 0;
 async function loadHourReport(){   // the SAME report pinned to the top of review — per-hour for one hour, the NET for the whole day
@@ -491,16 +593,70 @@ function updateReconLine(){
   if (REC.staffDet!=null) s += ` &nbsp;&nbsp;|&nbsp;&nbsp; <b>Staff</b> ${REC.staffDet}` + (REC.staffUn?` <span style="color:var(--warn)">· ${REC.staffUn} unassigned (S?) — name them</span>`:'');
   el.innerHTML = s;
 }
-function renderE2(r){                                                                  // the whole Customer group, as entry→exit journeys
+function renderE2(r){    // E2 customers: GROUP cards (#G) -> member customer cards (collapsed thumbnail -> every sighting), peers of the staff cards
   const el=$('#e2journeys'); if(!el) return;
   const mins=s=>s?Math.round(s/60)+'m':'—';
-  const th=c=>(c&&!HIDE)?`<img src="${cropURL(c)}" class="gthumb" style="cursor:zoom-in" onclick="zoom('${c}')">`:'<div class="gthumb nocrop">👤</div>';
-  const mems=((r&&r.customer_groups)||[]).flatMap(g=>g.members||[]).slice().sort((a,b)=>String(a.in_ist||'').localeCompare(String(b.in_ist||'')));
-  el.innerHTML = `<div class="hint" style="margin-bottom:8px">🛍️ ${mems.length} customer${mems.length===1?'':'s'} · entry → exit journeys (every #C in the All-Detections customer group)</div>
-    <div class="e2row">${mems.map(m=>`<figure class="e2cell">${th(m.crop)}<figcaption>${m.pid?`<span class="pidbadge cust">#${m.pid}</span>`:''}${m.group?`<span class="pidbadge grp">#${m.group}</span>`:''}${m.demo?`<div class="demo">${m.demo}</div>`:''}<div><b>${m.in_ist||'—'}</b>${m.out_ist?` → ${m.out_ist}`:''}</div><span class="${m.dwell_s?'hint':'inside-now'}">${m.dwell_s?mins(m.dwell_s)+' dwell':'⏱ still inside'}</span></figcaption></figure>`).join('')||'<p class="empty">no customers this period</p>'}</div>`;
-  REC.custReport = (r&&r.customers&&r.customers.unique_customers!=null)?r.customers.unique_customers:mems.length;
-  REC.custE2 = mems.length;
+  const groups=((r&&r.customer_groups)||[]);
+  const cards=(REV&&REV.customer_cards)||null;
+  if(!cards){   // read-only / no local crops -> flat entry-crop fallback (old behaviour)
+    const th=c=>(c&&!HIDE)?`<img src="${cropURL(c)}" class="gthumb" style="cursor:zoom-in" onclick="zoom('${c}')">`:'<div class="gthumb nocrop">👤</div>';
+    const mems=groups.flatMap(g=>g.members||[]).slice().sort((a,b)=>String(a.in_ist||'').localeCompare(String(b.in_ist||'')));
+    el.innerHTML=`<div class="hint" style="margin-bottom:8px">🛍️ ${mems.length} customer${mems.length===1?'':'s'} · entry → exit journeys</div>
+      <div class="e2row">${mems.map(m=>`<figure class="e2cell">${th(m.crop)}<figcaption>${m.pid?`<span class="pidbadge cust">#${m.pid}</span>`:''}${m.group?`<span class="pidbadge grp">#${m.group}</span>`:''}${m.demo?`<div class="demo">${m.demo}</div>`:''}<div><b>${m.in_ist||'—'}</b>${m.out_ist?` → ${m.out_ist}`:''}</div><span class="${m.dwell_s?'hint':'inside-now'}">${m.dwell_s?mins(m.dwell_s)+' dwell':'⏱ still inside'}</span></figcaption></figure>`).join('')||'<p class="empty">no customers this period</p>'}</div>`;
+    REC.custReport=(r&&r.customers&&r.customers.unique_customers!=null)?r.customers.unique_customers:mems.length;
+    REC.custE2=mems.length; updateReconLine(); return;
+  }
+  const stThumb=c=>(c&&!HIDE)?`<img src="${cropURL(c)}" class="staffthumb">`:'<div class="staffthumb nocrop">👤</div>';
+  const grThumb=c=>(c&&!HIDE)?`<img src="${cropURL(c)}" class="gthumb" loading="lazy" decoding="async" style="cursor:zoom-in" onload="setDim(this)" onclick="event.stopPropagation();zoom('${c}')">`:'<div class="gthumb nocrop">👤</div>';
+  const custCard=(c)=>{   // EVERYTHING from the ONE card object (1:1 with All-Detections) — crops, in/out, demo can't drift apart
+    const sights=c.crops||[];
+    const n=sights.length;
+    const io=`<b>${c.in_ist||c.first_ist||'—'}</b>${c.out_ist?` → ${c.out_ist}`:''}`;
+    const dwell=c.dwell_s?`<span class="hint">${mins(c.dwell_s)} dwell</span>`:'<span class="inside-now">⏱ still inside</span>';
+    const exitChip = c.exit_src==='presumed'                                   // L4 closed this PID without a clean OUT crossing
+      ? (c.exit_confirmed
+          ? ` · <span class="chip-ok" title="presumed exit, human-confirmed">exit confirmed ✓</span>`
+          : ` · <span class="chip-infer" title="no clean exit crossing seen — inferred at last sighting + grace">exit inferred</span>${(RO||!c.entry)?'':`<button class="miniconfirm" onclick="event.preventDefault();event.stopPropagation();confirmExit('${c.entry[0]}',${c.entry[1]})">confirm exit</button>`}`)
+      : '';
+    const grid=sights.map(s=>`<figure>${grThumb(s.crop)}<figcaption>${s.camera||''} ${s.ist||''} ${srcTag(s.source)}<br>#${s.track}<br><span class="cropdim" title="crop pixel size (w×h)"></span></figcaption></figure>`).join('');
+    return `<details class="subblk custcard" data-persist="cust-${c.pid}">
+      <summary>${proofPair(c)} <span class="pidbadge cust">#${c.pid}</span>${c.group?` <span class="pidbadge grp">#${c.group}</span>`:''} · ${n} sighting${n!==1?'s':''} · ${io} · ${dwell}${exitChip}${c.demo?` · <span class="demo">${c.demo}</span>`:''}${(RO||!c.entry)?'':`<button class="xtrack pidmore" title="open the full source frame with the door line drawn — verify the crossing actually happened" onclick="event.preventDefault();event.stopPropagation();showFrame('${c.entry[0]}','C05',${c.entry[1]})">🚪 verify</button>`}<button class="xtrack pidmore" title="full PID context — L1→L4 lifecycle, de-dup, every sighting" onclick="event.preventDefault();event.stopPropagation();openPid('customer','${c.pid}')">⤢ details</button></summary>
+      <div class="sgrp">${grid}</div></details>`;
+  };
+  const byGrp=new Map();                                  // group the cards by their OWN #G tag — single source, so labels can't skew vs the report
+  cards.forEach(c=>{ const k=c.group||'—'; if(!byGrp.has(k)) byGrp.set(k,[]); byGrp.get(k).push(c); });
+  const gnum=g=>{ const m=/G(\d+)/.exec(g||''); return m?+m[1]:1<<30; };
+  let html=[...byGrp.keys()].sort((a,b)=>gnum(a)-gnum(b)).map(k=>{
+    const cs=byGrp.get(k);
+    const lbl=k==='—'?'<span class="pidbadge grp">ungrouped</span>':`<span class="pidbadge grp">#${k}</span>`;
+    const reason=cs.length>1?`arrived together (${cs.length})`:'arrived alone';
+    return `<details class="subblk groupcard" data-persist="grp-${k}" open>
+      <summary>${lbl} ${cs.length} customer${cs.length!==1?'s':''} <span class="hint">— ${reason}</span></summary>
+      ${cs.map(custCard).join('')}</details>`;
+  }).join('');
+  const th2=c=>(c&&!HIDE)?`<img src="${cropURL(c)}" onclick="zoom('${c}')">`:'<div class="gthumb nocrop" style="width:42px;height:64px">👤</div>';
+  const sug=(REV&&REV.handoff_suggest)||[];                 // L3 loose de-dup candidates a human should adjudicate
+  const cpid=p=>p?('#C'+p):'#?';
+  const sugHTML=(!RO && sug.length)?`<div class="handoffbox"><h4>⚠ ${sug.length} possible duplicate${sug.length!==1?'s':''} — one person likely split into two PIDs by a tracker ID-switch. Same person?</h4>${
+    sug.map((s,i)=>`<div class="dupe-pair">${th2(s.a_crop)}<span class="pidbadge cust">${cpid(s.a_pid)}</span> <span class="hint">${s.a_ist||''}</span> <span class="vs">↔</span> ${th2(s.b_crop)}<span class="pidbadge cust">${cpid(s.b_pid)}</span> <span class="hint">${s.b_ist||''}</span><span class="gap">${s.gap}s gap · ${s.dist} apart</span>
+      <button class="ok" onclick="handoffDecide(${i},true)">✓ Merge</button>
+      <button onclick="handoffDecide(${i},false)">Keep separate</button></div>`).join('')}</div>`:'';
+  // 'unassigned' customers: L2 door crossings a human REMOVED from customers (pass-by / duplicate / not-a-person),
+  // reason-tagged. Shown as a peer section so the customer side closes like staff: total = accepted #C + unassigned.
+  const una=(REV&&REV.unassigned_cards)||[];
+  const custCrops=cards.reduce((n,c)=>n+((c.crops||[]).length),0);   // total customer CROPS == All-Detections Customers bucket (count-match assurance)
+  const unaCrops=una.reduce((n,u)=>n+((u.crops||[]).length),0);
+  const unaThumb=c=>(c&&!HIDE)?`<img src="${cropURL(c)}" class="gthumb" loading="lazy" decoding="async" style="cursor:zoom-in" onload="setDim(this)" onclick="event.stopPropagation();zoom('${c}')">`:'<div class="gthumb nocrop">👤</div>';
+  const unaCard=u=>`<figure>${unaThumb(u.crop)}<figcaption><span class="pidbadge reason" title="why this door crossing was removed from the customer group">${u.reason}</span> ${srcTag(u.source)}<br>${u.camera||''} ${u.ist||''}<br>#${u.track}${u.demo?`<br><span class="demo">${u.demo}</span>`:''}<br><span class="cropdim" title="crop pixel size (w×h)"></span></figcaption></figure>`;
+  const unaHTML=una.length?`<details class="subblk groupcard" data-persist="grp-unassigned" open>
+      <summary><span class="pidbadge una">unassigned</span> ${una.length} door crossing${una.length!==1?'s':''} · ${unaCrops} crop${unaCrops!==1?'s':''} removed from customers <span class="hint">— a human tagged each one pass-by / duplicate / not-a-person · part of the customer total, exactly like S? on the staff side</span></summary>
+      <div class="sgrp">${una.map(unaCard).join('')}</div></details>`:'';
+  const totLine=`🛍️ <b>${cards.length}</b> customer${cards.length===1?'':'s'} · <b>${custCrops}</b> crop${custCrops!==1?'s':''} in ${byGrp.size} group${byGrp.size!==1?'s':''}${una.length?` &nbsp;+&nbsp; <b>${una.length}</b> unassigned · <b>${unaCrops}</b> crop${unaCrops!==1?'s':''} (removed by HITL)`:''} · <span class="hint">crops match the All-Detections Customers bucket</span>`;
+  el.innerHTML=sugHTML+`<div class="hint" style="margin-bottom:8px">${totLine}</div>${html||'<p class="empty">no customers this period</p>'}${unaHTML}`;
+  REC.custReport=(r&&r.customers&&r.customers.unique_customers!=null)?r.customers.unique_customers:cards.length;
+  REC.custE2=cards.length;          // three-way recon compares ACCEPTED footfall; unassigned are shown but not double-counted here
   updateReconLine();
+  restoreOpen(el);
 }
 async function loadReport(){
   const date = (WIN||'').split('_')[0] || '';
@@ -557,6 +713,341 @@ async function doPublish(period, scope){
   loadReport();   // refresh: the new snapshot appears in the repository + resets the "what changed" banner
 }
 
+let ALBUM_CAP = 30;       // album covers shown per section before "show more" — keeps the grid fast
+function albumCover(c, kind){
+  const n=(c.crops||[]).length;
+  const badge=`<span class="pidbadge ${kind==='staff'?'staff':'cust'}">#${c.pid}</span>`;
+  const grp=c.group?` <span class="pidbadge grp">#${c.group}</span>`:'';
+  const nm=(kind==='staff'&&c.name)?` ${c.name}`:'';
+  const img=(c.best_crop&&!HIDE)?`<img class="albimg" src="${cropURL(c.best_crop)}" loading="lazy" decoding="async">`:'<div class="albimg nocrop">👤</div>';
+  return `<figure class="albumcover ${kind}" onclick="openPid('${kind}','${c.pid}')" title="browse every photo of this person">${img}<figcaption>${badge}${grp}${nm}<br><span class="hint">${n} photo${n!==1?'s':''}${c.demo?' · '+c.demo:''}</span></figcaption></figure>`;
+}
+function albumsHTML(){    // ReID trainer v1: every re-identified person as a browsable album, grouped by PID
+  const cc=(REV&&REV.customer_cards)||[], sc=(REV&&REV.staff_cards)||[];
+  if(!cc.length && !sc.length) return '<p class="empty">no people loaded — pick a window in the Review tab first</p>';
+  const section=(arr,kind,icon,title)=>{
+    const shown=arr.slice(0,ALBUM_CAP).map(c=>albumCover(c,kind)).join('') || '<p class="empty">none</p>';
+    const more=arr.length>ALBUM_CAP?`<button class="confallbtn" style="grid-column:1/-1;margin:6px auto;display:block" onclick="ALBUM_CAP=100000;loadReid()">show all ${arr.length} ↓ (showing ${ALBUM_CAP})</button>`:'';
+    return `<h2>${icon} ${title} · ${arr.length}</h2><div class="albumgrid">${shown}${more}</div>`;
+  };
+  return `<div class="hint" style="margin:4px 0 12px">👥 <b>${cc.length}</b> customer + <b>${sc.length}</b> staff albums · click a cover to browse every photo of that person (each tagged #C / #S)</div>
+    ${section(cc,'customer','🛍️','Customers')}${section(sc,'staff','👤','Staff')}`;
+}
+let REID_THR = 0.72, REID_CANDS = [];
+function unassignedHTML(){     // 3rd section: people detected but not yet assigned to a #C/#S
+  if(!DETALL) return `<h2>❓ Unassigned</h2><p class="hint">open the Review tab once to load detections, then return here.</p>`;
+  const un=(DETALL||[]).filter(d=>!d.confirmed && !d.parked && (d.determination==='to_review'||d.determination==='on_hold'));
+  if(!un.length) return `<h2>❓ Unassigned · 0</h2><p class="hint">everyone is assigned to a #C or #S 🎉</p>`;
+  const cap=un.slice(0,48);
+  const cov=cap.map(d=>`<figure class="albumcover" onclick="showFrame('${d.window}','${d.camera}',${d.track})" title="open source frame · assign it in Review → All-Detections"><img class="albimg" src="${cropURL(d.crop)}" loading="lazy" decoding="async"><figcaption><span class="hint">${d.camera} ${d.ist||''}<br>#${d.track} · ${d.determination==='on_hold'?'🅿️ on hold':'📋 to review'}</span></figcaption></figure>`).join('');
+  const more=un.length>48?`<p class="hint">+ ${un.length-48} more — assign these in the Review → All-Detections tab</p>`:'';
+  return `<h2>❓ Unassigned · ${un.length} <span class="hint">— pending a category</span></h2><div class="albumgrid">${cov}</div>${more}`;
+}
+async function loadReid(){    // ReID Trainer tab: trainer at top, then Customers → Staff → Unassigned albums
+  if(!$('#reid')) return;
+  $('#reid').innerHTML = `<div class="rephead"><div class="rtitle">🪪 ReID Trainer <span class="hint">— tick ✓ / cross ✗ / 👤 staff · your calls train the model</span></div></div>
+    <div id="reidtrainer"><p class="hint">finding look-alikes…</p></div>
+    ${albumsHTML()}
+    ${unassignedHTML()}`;
+  loadReidCands();   // builds 3 folded sections (Mark&Train · Look-alikes · My markings) incl. #reidimpact
+}
+async function loadLogs(){     // 📈 Logs tab: every training run + the impact it created (durable, from model_versions)
+  if(!$('#logs')) return;     // (My-markings review moved to the 🪪 ReID tab → Section 3)
+  $('#logs').innerHTML='<p class="hint">loading training log…</p>';
+  const t=await fetch('/api/hitl/training').then(r=>r.json()).catch(()=>null);
+  if(!t){ $('#logs').innerHTML='<p class="empty">could not load the training log</p>'; return; }
+  const cards=(t.versions||[]).map(v=>{
+    const im=(v.params||{}).impact;
+    const head=`<div class="loghead"><b>v${v.version}</b>${v.active?' <span class="pidbadge cust">✓ active</span>':''} · ${v.kind} · <span class="hint">${v.created||''} · ${v.trained_on||0} labels</span><br><span class="hint">${v.notes||''}</span></div>`;
+    return `<div class="logcard">${head}${im?impactHTML(Object.assign({},im,{version:v.version,created:v.created})):''}</div>`;
+  }).join('');
+  $('#logs').innerHTML=`<div class="rephead"><div class="rtitle">📈 Training log <span class="hint">— every training run + the impact it created · review your markings in the 🪪 ReID tab</span></div></div>${cards||'<p class="empty">no training runs yet — train in the 🪪 ReID tab</p>'}`;
+}
+async function markingUndo(i){
+  const p=(window._MARKINGS||[])[i]; if(!p||RO) return;
+  const same = p.label==='same';
+  let d;
+  if(p.source==='staff'){      // per-PID staff look-alike marking → staff-mark revoke
+    d=await fetch('/api/hitl/reid/staff-mark',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({employee_id:p.emp,window:p.a_window,track:p.a_track,revoke:true})}).then(r=>r.json()).catch(()=>null);
+  } else if(p.source==='xcam'){ // cross-camera marking → cross-revoke (window+a_track+cam+b_track)
+    d=await fetch('/api/hitl/reid/cross-revoke',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({window:p.a_window,a_track:p.a_track,cam:p.cam,b_track:p.b_track})}).then(r=>r.json()).catch(()=>null);
+  } else {
+    d=await fetch('/api/hitl/reid/revoke',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({a_window:p.a_window,a_track:p.a_track,b_window:p.b_window,b_track:p.b_track,b_crop:p.b_crop||'',same})}).then(r=>r.json()).catch(()=>null);
+  }
+  if(!d) return;
+  bumpReidMarked(same, -1);
+  const row=document.getElementById('mrow-'+i);
+  if(row){ row.style.opacity='0'; row.style.transition='opacity 0.3s'; setTimeout(()=>row.remove(),320); }
+}
+async function loadStaff(){     // 👥 Staff tab: READ-ONLY gallery — enrolled staff (S#) + unassigned (S?) · every day crop ✋/🤖 tagged
+  const box=$('#staffTab'); if(!box) return;
+  box.innerHTML='<p class="hint">loading staff…</p>';
+  let d=REV;
+  if(!d || !d.staff_cards){                                    // tab opened before the Review data loaded -> fetch the day
+    const date=(WIN||'').split('_')[0]||'';
+    d=await fetch('/api/hitl/visits-day/'+date).then(x=>x.json()).catch(()=>null);
+  }
+  const cards=(d&&d.staff_cards)||[];
+  if(!cards.length){ box.innerHTML='<div class="rephead"><div class="rtitle">👥 Staff</div></div><p class="empty">no staff this day</p>'; return; }
+  const assigned=cards.filter(g=>g.employee_id), un=cards.filter(g=>!g.employee_id);
+  const aCrops=assigned.reduce((n,g)=>n+((g.crops||[]).length),0);          // crop totals == All-Detections Staff bucket (count-match)
+  const uCrops=un.reduce((n,g)=>n+((g.crops||[]).length),0);
+  const grThumb=c=>(c&&!HIDE)?`<img src="${cropURL(c)}" class="gthumb" loading="lazy" decoding="async" style="cursor:zoom-in" onload="setDim(this)" onclick="event.stopPropagation();zoom('${c}')">`:'<div class="gthumb nocrop">👤</div>';
+  const card=g=>{
+    const lab=g.name||(g.pid==='S?'?'unassigned staff':'(unnamed)');
+    const fvl=g.floor_visits||[];
+    const span=fvl.length?`${fvl[0].in||'—'} → ${fvl[fvl.length-1].out||'still in'}`:'';
+    const fvsum=g.n_crossings?`${g.n_visits} floor-visit${g.n_visits!==1?'s':''}${span?` (${span})`:''}`:'interior only — no door crossing';
+    const srcs=(g.crops||[]).map(c=>c.source);
+    const prov=`${srcs.filter(s=>s==='human').length}✋ / ${srcs.filter(s=>s==='ai').length}🤖`;
+    const grid=(g.crops||[]).map(c=>`<figure>${grThumb(c.crop)}<figcaption>${c.camera||''} ${c.ist||''} ${srcTag(c.source)}<br>#${c.track}<br><span class="cropdim" title="crop pixel size (w×h)"></span></figcaption></figure>`).join('');
+    return `<details class="subblk staffcard" data-persist="stafftab-${g.pid}">
+      <summary>${proofPair(g)} <span class="pidbadge staff${g.pid==='S?'?' una':''}">#${g.pid}</span> <b>${lab}</b> · ${g.n_sightings} sighting${g.n_sightings!==1?'s':''} <span class="hint">— ${fvsum} · ${prov}</span><button class="xtrack pidmore" title="full PID context — lifecycle + floor-visits + every sighting" onclick="event.preventDefault();event.stopPropagation();openPid('staff','${g.pid}')">⤢ details</button></summary>
+      <div class="sgrp">${grid}</div></details>`;
+  };
+  box.innerHTML=`<div class="rephead"><div class="rtitle">👥 Staff <span class="hint">— ${assigned.length} enrolled · ${aCrops} crops${un.length?` + ${un.length} unassigned (S?) · ${uCrops} crop${uCrops!==1?'s':''}`:''} · read-only · every crop tagged ✋ human / 🤖 AI · crops match the All-Detections Staff bucket</span></div></div>
+    <div style="padding:8px 4px">${assigned.map(card).join('')}${un.length?`<hr class="divider"><div class="hint" style="margin:6px 0">⚠ unassigned — marked staff but not yet named (name them in the Review tab)</div>${un.map(card).join('')}`:''}</div>`;
+  restoreOpen(box);
+}
+const REID_PAGE = 10;           // visible pairs at a time — conveyor belt
+let REID_QUEUE = [];            // indices into REID_CANDS waiting to be shown
+
+const XCAM_TAG_CSS='display:inline-block;background:#7c5cff;color:#fff;font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;vertical-align:middle';
+function reidPairHTML(i){       // single pair row — same-camera look-alike OR cross-camera door↔interior (tagged)
+  const p=REID_CANDS[i]||{}; if(p.verdict) return '';
+  const th=c=>(c&&!HIDE)?`<img src="${cropURL(c)}" onclick="event.stopPropagation();zoom('${c}')">`:'<div class="gthumb nocrop" style="width:52px;height:78px">👤</div>';
+  if(p.type==='xcam'){         // cross-camera: door C05 crop ↔ interior C11/C14 crop, small 🎥 tag
+    const gapTxt = p.gap_s!=null ? ` · ${p.gap_s}s apart` : '';
+    const linkTag = p.kind==='done' ? '🔗 linked' : '＋ discovered';
+    return `<div class="dupe-pair reid" id="rcand-${i}">
+      ${th(p.door_crop)}<span class="pidbadge cust">#${p.pid||'?'}</span> <span class="hint">🚪 ${p.door_ist||''}</span>
+      <span class="vs">↔</span>
+      ${th(p.int_crop)}<span style="${XCAM_TAG_CSS}" title="cross-camera: door C05 ↔ interior ${p.cam} (${linkTag})">🎥 ${p.cam}</span> <span class="hint">#${p.b_track} · ${p.int_ist||''}</span>
+      <span class="gap">${p.sim!=null?Math.round(p.sim*100)+'% alike':''}${gapTxt}</span>
+      <span class="rcandact" id="rcandact-${i}">${reidActBtns(i)}</span></div>`;
+  }
+  if(!p.a_pid) return '';
+  return `<div class="dupe-pair reid" id="rcand-${i}">
+    ${th(p.a_crop)}<span class="pidbadge cust">#${p.a_pid}</span> <span class="hint">${p.a_in||''}${p.a_demo?' · '+p.a_demo:''}</span>
+    <span class="vs">↔</span>
+    ${th(p.b_crop)}<span class="pidbadge cust">#${p.b_pid}</span> <span class="hint">${p.b_in||''}${p.b_demo?' · '+p.b_demo:''}</span>
+    <span class="gap">${p.sim!=null?Math.round(p.sim*100)+'% alike':(p.source||'')}</span>
+    <span class="rcandact" id="rcandact-${i}">${reidActBtns(i)}</span></div>`;
+}
+function reidAppendNext(){       // pull next from queue and slide it in from the bottom
+  let idx;
+  while(REID_QUEUE.length>0){
+    idx=REID_QUEUE.shift();
+    if(!REID_CANDS[idx]||REID_CANDS[idx].verdict) continue;   // already marked while queued
+    break; idx=undefined;
+  }
+  if(idx===undefined) return;
+  const pairsDiv=document.getElementById('reidpairs'); if(!pairsDiv) return;
+  const tmp=document.createElement('div');
+  tmp.innerHTML=reidPairHTML(idx);
+  const row=tmp.firstElementChild; if(!row) return;
+  row.style.opacity='0'; row.style.transform='translateY(14px)';
+  pairsDiv.appendChild(row);
+  requestAnimationFrame(()=>{ row.style.transition='opacity 0.28s,transform 0.28s'; row.style.opacity='1'; row.style.transform=''; });
+  // update shown/remaining counter
+  const shown=pairsDiv.querySelectorAll('.dupe-pair').length;
+  const el=document.getElementById('reidshowncount');
+  if(el) el.textContent=`${shown} of ${shown+REID_QUEUE.length} pairs`;
+}
+async function loadReidCands(){
+  const box=$('#reidtrainer'); if(!box) return;
+  const date=(WIN||'').split('_')[0]||'';
+  const [r, xc, st, tg] = await Promise.all([
+    fetch(`/api/hitl/reid/candidates?date=${date}&threshold=${REID_THR}`).then(x=>x.json()).catch(()=>null),
+    fetch(`/api/hitl/reid/cross-camera/${date}?threshold=0.55`).then(x=>x.json()).catch(()=>null),
+    fetch(`/api/hitl/reid/status?date=${date}`).then(x=>x.json()).catch(()=>null),
+    fetch('/api/hitl/training').then(x=>x.json()).catch(()=>null),   // gallery status for the §1 training hub
+  ]);
+  if(!r){ box.innerHTML='<p class="empty">could not load candidates</p>'; return; }
+  // unify: same-camera look-alikes + cross-camera door↔interior pairs in ONE belt. Interleave the two
+  // streams proportionally (each sorted by sim within itself) so every page shows a mix of both — a pure
+  // sim-sort would bury same-camera pairs because bridge links score systematically higher. Rank over the
+  // UNVOTED items only, else a type with many already-voted pairs has its leftovers pushed to the bottom.
+  const _rank=(arr,type)=>{ const s=arr.filter(p=>!p.verdict).sort((a,b)=>(b.sim||0)-(a.sim||0)); return s.map((p,idx)=>({...p,type,_pos:(idx+0.5)/Math.max(1,s.length)})); };
+  const same=_rank(r.candidates||[],'samecam');
+  const xcam=_rank([...((xc&&xc.done)||[]),...((xc&&xc.candidates)||[])],'xcam');
+  REID_CANDS=[...same,...xcam].sort((a,b)=>a._pos-b._pos);   // all unvoted now, interleaved
+  const visible=REID_CANDS.map((_,i)=>i).slice(0,REID_PAGE);
+  REID_QUEUE=REID_CANDS.map((_,i)=>i).slice(REID_PAGE);
+  const pct=Math.round(REID_THR*100);
+  const remaining=visible.length+REID_QUEUE.length;
+  const nXcam=REID_CANDS.filter(p=>p.type==='xcam').length;
+  const xcamNote=nXcam?` · ${nXcam} cross-camera 🎥`:'';
+  const slider=`<div class="reidctl">🎚 match strength: <input type="range" min="55" max="90" value="${pct}" oninput="REID_THR=this.value/100;document.getElementById('thrval').textContent=this.value+'%'" onchange="loadReidCands()"> <b id="thrval">${pct}%</b> <span class="hint">· <span id="reidshowncount">${visible.length} of ${remaining} pair${remaining!==1?'s':''}</span>${xcamNote} · ${r.embedded_customers}/${r.total_customers} embedded · slide left = more, right = stricter</span></div>`;
+  const initialPairs=visible.map(i=>reidPairHTML(i)).join('');
+  if(st) REID_STATUS=st;
+  const pend = (REID_STATUS&&REID_STATUS.pending)||0;
+  const trainBtn = RO ? '' : `<button class="ok reidtrainbtn" onclick="reidTrain()">🎓 Train on my answers${pend?` (${pend} new)`:''} → see the impact</button>`;
+  // --- ReID Trainer: 3 folded sections (1 Mark&Train · 2 Look-alikes · 3 My markings) ---
+  const gl = (tg&&tg.gallery)||{}; const av = (tg&&tg.active)||{};
+  const galLine = `<div class="hint" style="margin:6px 0 4px">🗂 staff gallery: <b>${gl.employees||0}</b> people · <b>${gl.embeddings||0}</b> reference crops · active model v${av.version??'—'} <span class="hint">(${av.kind||'none'})</span> — used to auto-ID staff every future day</div>`;
+  const modelBtns = RO ? '' : `<div class="trainacts" style="margin-top:6px">
+      <button onclick="doTrain('rebuild','#reidtrainmsg')" title="rebuild the staff gallery + threshold from your confirmed labels — instant, no GPU">🔄 Rebuild gallery</button>
+      <button onclick="doTrain('triplet','#reidtrainmsg')" title="fine-tune the OSNet backbone on your ✓same/✗different pairs (contrastive loss) — the real same/diff-gap fix · needs GPU">📐 Contrastive fine-tune (pairs)</button>
+    </div><div id="reidtrainmsg"></div>`;
+  box.innerHTML=`<div class="handoffbox">
+    <details class="reidsec" open>
+      <summary><b>🎓 Mark &amp; Train</b> <span class="hint reidstatusfull">${reidStatusFull()}</span></summary>
+      <div class="reidsecbody">${trainBtn}<div id="reidimpact"></div>${galLine}${modelBtns}
+        <p class="hint" style="margin-top:6px">all ReID training lives here: <b>Train on my answers</b> = quick threshold calibration · <b>Contrastive fine-tune</b> = deep backbone retrain on your pairs · <b>Rebuild gallery</b> = refresh staff reference embeddings.</p>
+      </div>
+    </details>
+    <details class="reidsec" open>
+      <summary><b>🔍 Look-alikes to confirm</b> <span class="hint">— ${remaining} pair${remaining!==1?'s':''}${xcamNote} · same person? ✓ merge / ✗ keep separate · 🎥 = cross-camera</span></summary>
+      <div class="reidsecbody">${slider}<div id="reidpairs">${initialPairs||'<p class="empty">no look-alike pairs at this strength — slide left to see more</p>'}</div></div>
+    </details>
+    <details class="reidsec" ontoggle="if(this.open)loadReidMarkings()">
+      <summary><b>📋 My markings</b> <span class="hint reidmarksum">${REID_STATUS?`— ${REID_STATUS.total} pair${REID_STATUS.total!==1?'s':''} (${REID_STATUS.n_same} same · ${REID_STATUS.n_diff} different)${pend?` · <b>${pend} due for training</b>`:' · all trained ✓'}`:'— expand to review'}</span></summary>
+      <div class="reidsecbody"><div id="reidmarkings"><p class="hint">expand to review every ✓/✗ you marked (here + in the E2 staff/customer drawers) — undo any mistake, then train.</p></div></div>
+    </details>
+  </div>`;
+  if(REID_LAST_IMPACT){ const im=document.getElementById('reidimpact'); if(im) im.innerHTML=impactHTML(REID_LAST_IMPACT); }   // survive trainer rebuild
+}
+async function loadReidMarkings(force){   // Section 3: every ✓/✗ you've marked (belt + E2 drawers + cross-cam) — cross-check + undo, then train
+  const box=document.getElementById('reidmarkings'); if(!box) return;
+  if(box.dataset.loaded && !force) return;                 // lazy: load once on first expand
+  box.innerHTML='<p class="hint">loading your markings…</p>';
+  const date=(WIN||'').split('_')[0]||'';
+  const mk=await fetch(`/api/hitl/reid/markings?date=${date}`).then(r=>r.json()).catch(()=>null);
+  const box2=document.getElementById('reidmarkings'); if(!box2) return;
+  if(!mk){ box2.innerHTML='<p class="empty">could not load markings</p>'; return; }
+  box2.dataset.loaded='1';
+  window._MARKINGS=mk.pairs;
+  const th=c=>(c&&!HIDE)?`<img src="${cropURL(c)}" style="width:38px;height:56px;object-fit:cover;border-radius:3px;cursor:zoom-in" onclick="event.stopPropagation();zoom('${c}')" loading="lazy">`:'<div style="width:38px;height:56px;background:var(--bg2);border-radius:3px;display:inline-block"></div>';
+  const rows=(mk.pairs||[]).map((p,i)=>{
+    const simTxt=p.sim!=null?Math.round(p.sim*100)+'%':'—';
+    const lbl=p.label==='same'?`<span style="color:var(--ok);font-weight:600">✓ same</span>`:`<span style="color:var(--warn);font-weight:600">✗ diff</span>`;
+    const src=p.source==='xcam'?` <span class="hint">(🎥 ${p.cam||''})</span>`:p.source==='merge'?' <span class="hint">(merge)</span>':'';
+    const undoBtn=RO?'':` <button class="miniconfirm" title="undo this marking" onclick="markingUndo(${i})">↩</button>`;
+    return `<div class="markrow" id="mrow-${i}">${th(p.a_crop)}<span style="margin:0 3px">${lbl}</span>${th(p.b_crop)}<span class="gap" style="margin-left:6px">${simTxt}</span>${src}${undoBtn}<span class="hint" style="margin-left:6px;font-size:11px">${p.created||''}</span></div>`;
+  }).join('');
+  const trainHere = RO ? '' : `<div style="margin:2px 0 8px"><button class="ok" onclick="reidTrain()">🎓 Train on these markings${(REID_STATUS&&REID_STATUS.pending)?` (${REID_STATUS.pending} new)`:''}</button></div>`;
+  // staff-crop removals (per-crop ✗ / unstaff) — a separate sub-list, restorable
+  const rmv=(mk.removals||[]);
+  const rmRows=rmv.map((p,i)=>{
+    const restoreBtn=RO?'':` <button class="miniconfirm" title="restore this crop to staff" onclick="removalRestore(${i})">↩ restore</button>`;
+    return `<div class="markrow" id="rmrow-${i}">${th(p.crop)}<span style="margin:0 3px;color:var(--no,#e0533d);font-weight:600">✗ removed from staff</span><span class="hint">#${p.track} · ${p.window}</span>${restoreBtn}</div>`;
+  }).join('');
+  const rmBlock = rmv.length ? `<div class="hint" style="margin:12px 0 4px">🧹 <b>${rmv.length}</b> staff-crop removal${rmv.length!==1?'s':''} (moved back to the pool) — restore any mistake</div><div style="max-height:240px;overflow-y:auto">${rmRows}</div>` : '';
+  window._REMOVALS=rmv;
+  box2.innerHTML = (mk.total||rmv.length)
+    ? `<div class="hint" style="margin:2px 0 6px">${mk.total} pairs — ${mk.n_same} same · ${mk.n_diff} different · cross-check below, ↩ undo any mistake, then train.</div>${trainHere}<div style="max-height:520px;overflow-y:auto">${rows}</div>${rmBlock}`
+    : '<p class="empty">no markings yet — confirm look-alikes above or in the E2 staff/customer drawers</p>';
+}
+async function removalRestore(i){
+  const p=(window._REMOVALS||[])[i]; if(!p||RO) return;
+  const d=await fetch('/api/hitl/unstaff-track',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({window:p.window,track:p.track,restore:true})}).then(r=>r.json()).catch(()=>null);
+  if(!d) return;
+  DIRTY_WINS.add(p.window);
+  const row=document.getElementById('rmrow-'+i);
+  if(row){ row.style.opacity='0'; row.style.transition='opacity 0.3s'; setTimeout(()=>row.remove(),320); }
+}
+let REID_LAST_IMPACT=null, REID_STATUS=null;
+function reidCountTxt(){ const s=REID_STATUS; if(!s) return ''; return `<b>${s.total}</b> marked${s.pending?` · <b>${s.pending}</b> new`:''}`; }
+function reidStatusFull(){ const s=REID_STATUS; if(!s) return ''; return `📋 you've marked <b>${s.total}</b> pair${s.total!==1?'s':''} (${s.n_same} same · ${s.n_diff} different) · ${s.pending?`<b>${s.pending}</b> new since training${s.last_version?' v'+s.last_version:''}`:'<span style="color:var(--ok)">all trained ✓</span>'}`; }
+function reidMarkSumTxt(){ const s=REID_STATUS; if(!s) return '— expand to review'; const pend=s.pending||0; return `— ${s.total} pair${s.total!==1?'s':''} (${s.n_same} same · ${s.n_diff} different)${pend?` · <b>${pend} due for training</b>`:' · all trained ✓'}`; }
+function refreshReidCounters(){   // re-render every visible marked/pending counter (drawer + trainer + Section 3) after a ✓/✗
+  document.querySelectorAll('.reidcount').forEach(el=>el.innerHTML=reidCountTxt());
+  document.querySelectorAll('.reidstatusfull').forEach(el=>el.innerHTML=reidStatusFull());
+  document.querySelectorAll('.reidmarksum').forEach(el=>el.innerHTML=reidMarkSumTxt());
+  document.querySelectorAll('.reidtrainbtn').forEach(b=>{ b.textContent=`🎓 Train on my answers${(REID_STATUS&&REID_STATUS.pending)?` (${REID_STATUS.pending} new)`:''} → see the impact`; });
+  const mk=document.getElementById('reidmarkings'); if(mk) mk.dataset.loaded='';   // a new mark/undo -> Section 3 list reloads on next expand
+}
+function bumpReidMarked(same, delta){   // optimistic: a ✓/✗ adds one marking + one pending; undo passes delta=-1 to give it back (re-synced on next open)
+  delta = delta || 1;
+  if(!REID_STATUS) REID_STATUS={total:0,pending:0,n_same:0,n_diff:0};
+  REID_STATUS.total=Math.max(0,(REID_STATUS.total||0)+delta); REID_STATUS.pending=Math.max(0,(REID_STATUS.pending||0)+delta);
+  if(same) REID_STATUS.n_same=Math.max(0,(REID_STATUS.n_same||0)+delta); else REID_STATUS.n_diff=Math.max(0,(REID_STATUS.n_diff||0)+delta);
+  refreshReidCounters();
+}
+function impactHTML(r){     // before→after training-impact card — reused by the trainer panel AND the Logs tab
+  const pc=x=>x==null?'—':Math.round(x*100)+'%';
+  return `<div class="okbox"><b>🎓 ${r.n_same+r.n_diff} answers</b> <span class="hint">(${r.n_same} same · ${r.n_diff} different${r.version?' → model v'+r.version:''}${r.created?' · '+r.created:''})</span>
+    <div class="impactgrid">
+      <div><b>${pc(r.old_acc)} → ${pc(r.best_acc)}</b><br><span class="hint">accuracy on your labels</span></div>
+      <div><b>${r.old_threshold} → ${r.best_threshold}</b><br><span class="hint">calibrated match threshold</span></div>
+      <div><b>${pc(r.same_avg)} vs ${pc(r.diff_avg)}</b><br><span class="hint">same vs different look-alike</span></div>
+      <div><b>45 → ${r.customers_now}</b><br><span class="hint">unique customers (✓ merges)</span></div>
+    </div>
+    <p class="hint" style="margin-top:4px">📊 ${r.verdict||''}</p></div>`;
+}
+async function reidTrain(){     // learning-free: calibrate the matcher from your ✓/✗ verdicts + show the before→after
+  if(RO) return;
+  const box=$('#reidimpact'); if(box) box.innerHTML='<p class="hint">training on your answers…</p>';
+  const date=(WIN||'').split('_')[0]||'';
+  const r=await fetch('/api/hitl/reid/train',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date})}).then(x=>x.json()).catch(()=>null);
+  if(!box) return;
+  if(!r){ box.innerHTML='<div class="okbox bad">training failed</div>'; return; }
+  if(!r.ok){ box.innerHTML=`<div class="okbox warn">${r.message||'not enough pairs'}</div>`; return; }
+  REID_LAST_IMPACT=r;                            // remember it so a tab-switch/refresh re-renders it (no more vanishing)
+  box.innerHTML=impactHTML(r);
+  REID_THR=r.best_threshold; loadReidCands();    // re-rank candidates at the calibrated threshold (#reidimpact is outside the rebuilt box)
+  if(typeof loadLogs==='function' && $('#tab-logs') && $('#tab-logs').style.display!=='none') loadLogs();
+}
+function reidActBtns(i){   // trainer buttons — same-camera gets ✓/✗/staff; cross-camera gets ✓/✗ (link/un-link)
+  const p=REID_CANDS[i]||{};
+  if(p.type==='xcam'){
+    return `<button class="ok" onclick="reidDecide(${i},true)" title="same person across cameras — link this interior crop to #${p.pid}">✓ same</button>`
+      + `<button onclick="reidDecide(${i},false)" title="wrong association — un-link it (the interior crop drops back to 'inside')">✗ different</button>`;
+  }
+  return `<button class="ok" onclick="reidDecide(${i},true)" title="same person — merge #${p.b_pid} into #${p.a_pid}">✓ same</button>`
+    + `<button onclick="reidDecide(${i},false)" title="different people — keep separate">✗ different</button>`
+    + `<button onclick="reidStaff(${i})" title="this is staff, not a customer">👤 staff</button>`;
+}
+function reidVerdictHTML(i, verdict){
+  const same = verdict === 'same';
+  const p = REID_CANDS[i] || {};
+  return `<span class="hint">${same ? `✓ merged #${p.b_pid} → #${p.a_pid}` : `✗ marked different`}</span> <button class="miniconfirm" title="undo this mark" onclick="reidRevoke(${i},${same})">↩ undo</button>`;
+}
+async function reidDecide(i, same){
+  const p=REID_CANDS[i]; if(!p||RO) return;
+  let d;
+  if(p.type==='xcam'){                           // cross-camera: link / un-link the door↔interior pairing
+    d=await fetch('/api/hitl/reid/cross-decision',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({window:p.window,a_track:p.a_track,cam:p.cam,b_track:p.b_track,same})}).then(r=>r.json()).catch(()=>null);
+    if(!d) return;
+    if(d.stale) DIRTY_WINS.add(p.window);
+  } else {                                        // same-camera look-alike: merge / keep-separate
+    d=await fetch('/api/hitl/reid/decision',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({a_window:p.a_window,a_track:p.a_track,b_window:p.b_window,b_track:p.b_track,b_crop:p.b_crop,same})}).then(r=>r.json()).catch(()=>null);
+    if(!d) return;
+    if(d.already) return;                         // idempotent: already decided this way — don't double-count
+    if(d.stale) DIRTY_WINS.add(p.b_window);
+  }
+  bumpReidMarked(same);
+  p.verdict = same ? 'same' : 'different';       // remember locally so reload skips it
+  const row=document.getElementById('rcand-'+i);
+  if(row){
+    row.style.transition='opacity 0.22s'; row.style.opacity='0';
+    setTimeout(()=>{ row.remove(); reidAppendNext(); }, 240);
+  } else { reidAppendNext(); }
+}
+async function reidRevoke(i, same){     // reverse a wrongly-marked pair: un-merge (same) or un-reject (different), then restore the buttons
+  const p=REID_CANDS[i]; if(!p||RO) return;
+  const d=await fetch('/api/hitl/reid/revoke',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({a_window:p.a_window,a_track:p.a_track,b_window:p.b_window,b_track:p.b_track,b_crop:p.b_crop,same})}).then(r=>r.json()).catch(()=>null);
+  if(!d) return;
+  if(d.stale) DIRTY_WINS.add(p.b_window);        // un-merge restored #${p.b_pid} to the count
+  bumpReidMarked(same, -1);                       // give the marking back
+  const act=document.getElementById('rcandact-'+i);
+  if(act) act.innerHTML=reidActBtns(i);
+}
+function reidStaff(i){
+  const p=REID_CANDS[i]; if(!p||RO) return;
+  openStaffPicker('reid-'+p.b_track, p.b_track, p.b_crop||'', 'C05', p.b_window);   // mark the right-hand one as staff
+}
+// (cross-camera validation is now unified into the main ReID belt above — see loadReidCands /
+//  reidPairHTML / reidActBtns / reidDecide, which branch on type==='xcam'. The old standalone
+//  #xcam section + loadCrossCam/xcam* helpers were removed.)
 async function loadTraining(){
   $('#train').innerHTML = '<p class="hint">loading training status…</p>';
   const t = await fetch('/api/hitl/training').then(r=>r.json()).catch(()=>null);
@@ -577,6 +1068,7 @@ async function loadTraining(){
     ${RO?'':`<div class="trainacts">
       <button class="ok" onclick="doTrain('rebuild')">🔄 Rebuild from labels</button>
       <button onclick="doTrain('finetune')">🧠 Deep fine-tune (OSNet)</button>
+      <button onclick="doTrain('triplet')">📐 Contrastive fine-tune (pairs)</button>
       <button onclick="doRerun()">♻ Re-run L2–L4 on ${filt} → see delta</button>
     </div>`}
     <div id="trainmsg"></div>
@@ -584,27 +1076,29 @@ async function loadTraining(){
     <h2>Published periods</h2><div class="chips">${pub}</div>
     <h2>Model history</h2>
     <table class="reptable"><thead><tr><th>version</th><th>kind</th><th>thr</th><th>labels</th><th>when</th><th>notes</th></tr></thead><tbody>${ver||'<tr><td colspan="6" class="empty">no training runs yet — click Rebuild</td></tr>'}</tbody></table>
-    <p class="hint" style="margin-top:14px"><b>Rebuild</b> = learning-free (gallery + threshold from your confirmed labels; instant, no GPU). <b>Deep fine-tune</b> = adapt the OSNet backbone (needs torchreid + more confirmed crops + a free GPU). After training, <b>Re-run</b> applies the active model to the chosen Review filter and shows the before→after delta.</p>`;
+    <p class="hint" style="margin-top:14px"><b>Rebuild</b> = learning-free (gallery + threshold from your confirmed labels; instant, no GPU). <b>Deep fine-tune</b> = adapt OSNet with identity classification (needs GPU + enough confirmed staff crops). <b>Contrastive fine-tune</b> = train OSNet with your ✓same/✗different pair verdicts (contrastive loss; targets the same/diff cosine gap directly — the recommended first upgrade). After training, <b>Re-run</b> applies the active model to the chosen Review filter and shows the before→after delta.</p>`;
 }
 
-async function doTrain(mode){
-  const msg = $('#trainmsg');
-  msg.innerHTML = `<p class="hint">${mode==='rebuild'?'rebuilding gallery + threshold…':'starting deep fine-tune…'}</p>`;
+async function doTrain(mode, msgId){
+  const msg = $(msgId||'#trainmsg'); if(!msg) return;
+  const modeLabel = mode==='rebuild'?'rebuilding gallery + threshold…':mode==='triplet'?'exporting pairs + starting contrastive fine-tune…':'starting deep fine-tune…';
+  msg.innerHTML = `<p class="hint">${modeLabel}</p>`;
   const r = await fetch('/api/hitl/train',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})}).then(r=>r.json()).catch(()=>null);
   if (!r){ msg.innerHTML = '<div class="okbox bad">training failed</div>'; return; }
-  if (mode==='rebuild'){ msg.innerHTML = `<div class="okbox">✓ ${r.summary||'rebuilt'}</div>`; loadTraining(); return; }
-  if (r.job) pollTrain(r.job);
+  if (mode==='rebuild'){ msg.innerHTML = `<div class="okbox">✓ ${r.summary||'rebuilt'}</div>`; loadTraining(); if(msgId)loadReidCands(); return; }
+  if (r.job) pollTrain(r.job, msgId);
   else msg.innerHTML = `<div class="okbox">${r.message||JSON.stringify(r)}</div>`;
 }
 
-async function pollTrain(job){
-  const msg = $('#trainmsg');
+async function pollTrain(job, msgId){
+  const msg = $(msgId||'#trainmsg'); if(!msg) return;
   for (let i=0;i<150;i++){
     const st = await fetch('/api/hitl/train-status/'+job).then(r=>r.json()).catch(()=>null);
     if (!st){ msg.innerHTML = '<div class="okbox bad">lost the job</div>'; return; }
     const done = ['done','skipped','error'].includes(st.status);
     const cls = st.status==='done' ? 'okbox' : st.status==='skipped' ? 'okbox warn' : st.status==='error' ? 'okbox bad' : 'delta';
-    msg.innerHTML = `<div class="${cls}"><b>Deep fine-tune</b> · ${st.status} ${st.progress||0}%<div class="pbar"><i style="width:${st.progress||0}%"></i></div><span class="hint">${st.message||''}</span></div>`;
+    const jobLabel = (st.kind==='triplet')?'Contrastive fine-tune':'Deep fine-tune';
+    msg.innerHTML = `<div class="${cls}"><b>${jobLabel}</b> · ${st.status} ${st.progress||0}%<div class="pbar"><i style="width:${st.progress||0}%"></i></div><span class="hint">${st.message||''}</span></div>`;
     if (done){ if (st.status==='done') loadTraining(); return; }
     await new Promise(s=>setTimeout(s,2000));
   }
@@ -638,7 +1132,6 @@ async function loadDetections(){
   if (typeof updateReconLine==='function') updateReconLine();
   renderDets();
 }
-function inTimeRange(ist){ if (!DAY) return true; const t=(ist||'').slice(0,5); return (!DETF.from || t>=DETF.from) && (!DETF.to || t<=DETF.to); }  // only the whole-day view slices by time; a single hour is already a slice
 function toggleCam(c){ DETF.cams[c]=DETF.cams[c]?0:1; LS.set('detf',DETF); renderDets(); }
 function setMinDur(v){ DETF.minDur=parseFloat(v)||0; LS.set('detf',DETF); renderDets(); }
 function setMinW(v){ DETF.minW=parseInt(v)||0; LS.set('detf',DETF); renderDets(); }     // min crop WIDTH px (horizontal), acts on its own
@@ -651,8 +1144,6 @@ function toggleGrp(k, head){   // lazy-render: build this bucket's cards on expa
   const mini = g.querySelector('.mini');
   if (mini) mini.innerHTML = opening ? buildBucketCards(k) : '';
 }
-function setTimeF(which,v){ DETF[which]=v||''; LS.set('detf',DETF); renderReview(); renderDets(); }   // one slice -> both halves
-function clearTimeF(){ DETF.from=DETF.to=''; LS.set('detf',DETF); renderReview(); renderDets(); }
 const BUCKET = {
   to_review:{icon:'📋',title:'To review',note:'undecided — pick a category (📷 shows enter vs pass-by)'},
   customer: {icon:'🛍️',title:'Customers',note:'entered + counted'},
@@ -665,7 +1156,7 @@ const BUCKET = {
 };
 const OUTCOMES = ['customer','staff','passby','not_person','duplicate'];
 function detKeep(d){ return DETF.cams[d.camera] && (d.dur_s||0)>=DETF.minDur
-    && (!DETF.minW || !d.crop_w || d.crop_w>=DETF.minW) && (!DETF.minH || !d.crop_h || d.crop_h>=DETF.minH) && inTimeRange(d.ist); }   // unknown dims -> don't hide
+    && (!DETF.minW || !d.crop_w || d.crop_w>=DETF.minW) && (!DETF.minH || !d.crop_h || d.crop_h>=DETF.minH); }   // unknown dims -> don't hide
 function detCard(d){
   const k = d.window+'|'+d.camera+'|'+d.track, isSel = SEL.has(k), det = d.determination;   // window-qualified: track ids repeat across hours
   const chk = RO ? '' : `<input type="checkbox" class="dsel" ${isSel?'checked':''} title="select for bulk" onclick="event.stopPropagation();toggleSel('${d.window}','${d.camera}',${d.track},'${d.crop||''}')">`;
@@ -680,10 +1171,25 @@ function detCard(d){
   else if (OUTCOMES.includes(det)) head = RO ? `<div class="dtag sugg">${(det==='staff'&&d.staff_name)?d.staff_name+'?':'suggested'}</div>` : `${nameTag}<button class="confirmbtn" onclick="allocate('${d.window}','${d.camera}',${d.track},'${d.crop||''}','${det}')">✓ confirm</button>`;
   else if (det==='inside') head = RO ? `<div class="dtag sugg">already inside</div>` : `<button class="confirmbtn" title="already counted at the door" onclick="allocate('${d.window}','${d.camera}',${d.track},'${d.crop||''}','duplicate')">✓ already counted</button>`;
   const winb = (DAY && d.window) ? `<span class="winbadge">${(d.window.split('_')[1]||'').replace(/(\d\d)(\d\d)/,'$1:$2')}</span>` : '';   // which hour, in day view
-  return `<div class="ev dcard ${d.confirmed?'resolved':''} ${isSel?'selected':''}" data-w="${d.window}" data-cam="${d.camera}" data-trk="${d.track}" data-crop="${d.crop||''}">${chk}${frameBtn}${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''} ${winb}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}${pidTag(d)}${d.demo?` <span class="demo">${d.demo}</span>`:''}</div>${head}${menu}</div>`;
+  const l2b = d.l2_in ? `<span class="l2badge" title="L2 door-line IN crossing — one of the 49 raw door entries">🚪</span>` : '';   // ties this det back to the L2 49
+  return `<div class="ev dcard ${d.confirmed?'resolved':''} ${isSel?'selected':''}" data-w="${d.window}" data-cam="${d.camera}" data-trk="${d.track}" data-crop="${d.crop||''}">${chk}${frameBtn}${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''} ${winb}${l2b}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}${pidTag(d)}${d.demo?` <span class="demo">${d.demo}</span>`:''} <span class="cropdim" title="crop pixel size (w×h)">${(d.crop_w&&d.crop_h)?d.crop_w+'×'+d.crop_h+'px':''}</span></div>${head}${menu}</div>`;
 }
 function bucketArr(k){ return (DETALL||[]).filter(d=>d.determination===k && detKeep(d)).sort((a,b)=>(a.ist||'').localeCompare(b.ist||'')); }
-function buildBucketCards(k){ return bucketArr(k).map(detCard).join('')||'<p class="empty">none</p>'; }
+const DETCAP = 400;                                          // huge buckets (Inside ~4400) -> render first N, "show all" on demand
+let DETFULL = new Set();                                     // buckets the user chose to render in full
+function buildBucketCards(k){
+  const arr = bucketArr(k);
+  if (!arr.length) return '<p class="empty">none</p>';
+  if (arr.length <= DETCAP || DETFULL.has(k)) return arr.map(detCard).join('');
+  return arr.slice(0, DETCAP).map(detCard).join('')
+    + `<button class="confallbtn" style="grid-column:1/-1;margin:10px auto;display:block" onclick="showAllDet('${k}')">show all ${arr.length} crops ↓ (showing first ${DETCAP})</button>`;
+}
+function showAllDet(k){                                       // render the rest of a capped bucket on demand (lazy imgs keep it light)
+  DETFULL.add(k);
+  const head = [...document.querySelectorAll('#dets .ddhead')].find(h => (h.getAttribute('onclick')||'').includes(`'${k}'`));
+  const mini = head && head.closest('.dgrp').querySelector('.mini');
+  if (mini) mini.innerHTML = buildBucketCards(k);
+}
 function renderDets(){
   if(!DETALL || !DETMETA) return;
   const kept={}; let shown=0;
@@ -692,7 +1198,7 @@ function renderDets(){
     const m=BUCKET[k]||{icon:'',title:k,note:''}, arr=kept[k]||[], conf=arr.filter(d=>d.confirmed).length;
     const unconf=arr.filter(d=>!d.confirmed && !d.parked).length;
     const confAll = (!RO && (OUTCOMES.includes(k)||k==='inside') && unconf) ? `<button class="confallbtn" onclick="event.stopPropagation();confirmAllShown('${k}','${k==='inside'?'duplicate':k}')">✓ ${k==='inside'?'all already counted':'confirm all shown'} (${unconf})</button>` : '';
-    const body = DOPEN.has(k) ? (arr.map(detCard).join('')||'<p class="empty">none</p>') : '';   // lazy-render: closed buckets fire no image loads (a whole day is ~12k crops)
+    const body = DOPEN.has(k) ? buildBucketCards(k) : '';   // lazy-render closed buckets; huge buckets render capped + lazy imgs (buildBucketCards)
     return `<div class="dgrp ${DOPEN.has(k)?'open':''}"><div class="ddhead" onclick="toggleGrp('${k}',this)"><b>${m.icon} ${m.title} · ${conf}/${arr.length}</b> <span class="hint">${m.note}</span> ${confAll}</div><div class="dbody"><div class="mini">${body}</div></div></div>`;
   };
   const denom = (DETALL||[]).length;   // close covers EVERY detection incl. Inside — a missed customer can hide there
@@ -725,8 +1231,12 @@ function renderStaff(){
   const cards = d.staff_cards;
   if (!cards || !cards.length) return renderStaffLegacy(d);   // cloud read-only (no local files) -> enrolled-only fallback
   const stThumb = c => (c&&!HIDE)?`<img src="${cropURL(c)}" class="staffthumb">`:'<div class="staffthumb nocrop">👤</div>';   // collapsed: click summary to expand
-  const grThumb = c => (c&&!HIDE)?`<img src="${cropURL(c)}" class="gthumb" style="cursor:zoom-in" onclick="event.stopPropagation();zoom('${c}')">`:'<div class="gthumb nocrop">👤</div>';
-  $('#staff').innerHTML = cards.map(g=>{
+  const grThumb = c => (c&&!HIDE)?`<img src="${cropURL(c)}" class="gthumb" style="cursor:zoom-in" onload="setDim(this)" onclick="event.stopPropagation();zoom('${c}')">`:'<div class="gthumb nocrop">👤</div>';
+  const sUn = cards.filter(g=>!g.employee_id);                              // unassigned (S?) — peer of the customer 'unassigned' pile
+  const sUnCrops = sUn.reduce((n,g)=>n+((g.crops||[]).length),0);
+  const sCrops = cards.reduce((n,g)=>n+((g.crops||[]).length),0);          // total staff CROPS == All-Detections Staff bucket (count-match)
+  const staffHdr = `<div class="hint" style="margin:0 0 8px">👤 <b>${cards.length-sUn.length}</b> staff · <b>${sCrops-sUnCrops}</b> crop${(sCrops-sUnCrops)!==1?'s':''}${sUn.length?` &nbsp;+&nbsp; <b>${sUn.length}</b> unassigned (S?) · <b>${sUnCrops}</b> crop${sUnCrops!==1?'s':''}`:''} &nbsp;·&nbsp; crops match the All-Detections Staff bucket</div>`;
+  $('#staff').innerHTML = staffHdr + cards.map(g=>{
       const lab = g.name || (g.pid==='S?'?'unassigned staff':'(unnamed)');
       const fvl = g.floor_visits||[];
       const span = fvl.length ? `${fvl[0].in||'—'} → ${fvl[fvl.length-1].out||'still in'}` : '';
@@ -738,10 +1248,10 @@ function renderStaff(){
       const grid = (g.crops||[]).map(c=>{
         const name=(RO||DAY||g.employee_id)?'':`<button class="xtrack" title="assign a name" onclick="event.stopPropagation();openStaffPicker('open-${c.track}',${c.track},'${c.crop}','${c.camera}','${c.window||WIN}')">👤</button>`;   // pass the CAMERA -> camera-aware /allocate (interior crops no longer hit the C05 track of the same number)
         const x=(RO||DAY)?'':`<button class="xtrack" title="not staff — back to review" onclick="event.stopPropagation();unstaffTrack(${c.track})">✗</button>`;
-        return `<figure>${grThumb(c.crop)}<figcaption>${c.camera} ${c.ist||''}<br>#${c.track} ${name}${x}</figcaption></figure>`;
+        return `<figure>${grThumb(c.crop)}<figcaption>${c.camera} ${c.ist||''} ${srcTag(c.source)}<br>#${c.track} ${name}${x}<br><span class="cropdim" title="crop pixel size (w×h)"></span></figcaption></figure>`;
       }).join('');
       return `<details class="subblk staffcard" data-persist="staff-${g.pid}">
-        <summary>${stThumb(g.best_crop)} <span class="pidbadge staff">#${g.pid}</span> <b>${lab}</b> · ${g.n_sightings} sighting${g.n_sightings!==1?'s':''} <span class="hint">— ${fvsum}</span></summary>
+        <summary>${proofPair(g)} <span class="pidbadge staff">#${g.pid}</span> <b>${lab}</b> · ${g.n_sightings} sighting${g.n_sightings!==1?'s':''} <span class="hint">— ${fvsum}</span><button class="xtrack pidmore" title="full PID context — lifecycle + floor-visits + every sighting" onclick="event.preventDefault();event.stopPropagation();openPid('staff','${g.pid}')">⤢ details</button></summary>
         ${fvDetail}<div class="sgrp">${grid}</div><div style="margin-top:8px">${actions}</div></details>`;
     }).join('') || '<p class="empty">no staff this period</p>';
   restoreOpen($('#staff'));                  // re-apply each staff card's open/closed state after re-render
@@ -903,6 +1413,19 @@ function applyParkLocal(window, camera, track, on){
   else { d.determination = d._prepark || (d.confirmed?d.annotation:d.suggested) || 'to_review'; d.parked=false; }
 }
 function markStale(r, window){ if (r && r.stale){ DIRTY_WINS.add(window||WIN); renderDets(); } }   // a C05 mark -> THAT window's count needs recompute
+async function handoffDecide(i, same){           // L3 HITL: 'same person? merge / keep separate' on a loose de-dup candidate
+  const s=((REV&&REV.handoff_suggest)||[])[i]; if(!s||RO) return;
+  const d=await fetch('/api/hitl/handoff-decision',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({window:s.window, a:s.a, b:s.b, same, b_crop:s.b_crop||null})}).then(r=>r.json()).catch(()=>null);
+  if(d&&d.stale) DIRTY_WINS.add(s.window);        // merge dropped a C05 track -> report count refresh
+  load();                                          // re-fetch: the suggestion disappears + the count updates
+}
+async function confirmExit(win, track){          // L4 HITL: accept a presumed (inferred) exit
+  if(RO) return;
+  await fetch('/api/hitl/confirm-exit',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({window:win, track})}).then(r=>r.json()).catch(()=>null);
+  load();                                          // re-fetch: 'exit inferred' flips to 'exit confirmed ✓'
+}
 async function allocate(window, camera, track, crop, category){
   applyDetLocal(window, camera, track, category); renderDets();   // INSTANT — bucket move is annotation-driven, no L4 wait
   markStale(await fetch('/api/hitl/allocate',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -991,6 +1514,174 @@ async function openMatches(empId){
   $('#matchModal').classList.add('show');
 }
 function closeMatches(){ $('#matchModal').classList.remove('show'); }
+// --- Phase 3: per-PID detail drawer (the full L1->L4 story for one #C / #S) ---
+function lifecycleHTML(kind, c){
+  const mm = s => (s||s===0) ? Math.round(s/60)+'m' : '—';
+  const cams = (c.cameras && c.cameras.length) ? c.cameras : [...new Set((c.crops||[]).map(x=>x.camera))];
+  const rows = [`<div class="lcrow"><span class="lctag">L1 detected</span> ${c.n_sightings||0} sighting${c.n_sightings===1?'':'s'} · ${cams.join(' · ')||'—'}</div>`];
+  if (kind==='customer'){
+    rows.push(`<div class="lcrow"><span class="lctag">L2 born</span> <b>${c.in_ist||c.first_ist||'—'}</b> <span class="hint">door crossing (C05)</span></div>`);
+    const dd = c.dedup || {n_merged:0, members:[], canonical:null};
+    const why = (dd.members||[]).map(m=>`#${m.track}${m.source==='auto'?` <span class="hint">(${m.gap}s · ${m.dist} apart · auto)</span>`:' <span class="hint">(human)</span>'}`).join(', ');
+    rows.push(`<div class="lcrow"><span class="lctag">L3 de-dup</span> ${dd.n_merged>0?`⛓ merged from ${dd.n_merged+1} tracks — #${dd.canonical} ← ${why}`:'single door track'}</div>`);
+    let l4;
+    if (c.out_ist){
+      const tag = c.exit_src==='presumed'
+        ? (c.exit_confirmed ? '<span class="chip-ok">inferred ✓</span>'
+            : `<span class="chip-infer">inferred</span>${(RO||!c.entry)?'':` <button class="miniconfirm" onclick="confirmExit('${(c.entry||[])[0]}',${(c.entry||[])[1]});closePid()">confirm exit</button>`}`)
+        : (c.exit_src==='matched' ? '<span class="hint">matched OUT</span>' : '<span class="hint">visit OUT</span>');
+      l4 = `<b>${c.out_ist}</b> ${tag} · ${mm(c.dwell_s)} dwell`;
+    } else l4 = '<span class="inside-now">⏱ still inside</span>';
+    rows.push(`<div class="lcrow"><span class="lctag">L4 exit</span> ${l4}</div>`);
+  } else {
+    const fvl = c.floor_visits||[];
+    const span = fvl.length ? `${fvl[0].in||'—'} → ${fvl[fvl.length-1].out||'still in'}` : '';
+    rows.push(`<div class="lcrow"><span class="lctag">L2 born</span> <b>${fvl.length?(fvl[0].in||'—'):'—'}</b> <span class="hint">first door crossing (C05)</span></div>`);
+    rows.push(`<div class="lcrow"><span class="lctag">L3 identity</span> gallery-matched staff · ${c.n_crossings||0} door crossing${c.n_crossings===1?'':'s'}</div>`);
+    rows.push(`<div class="lcrow"><span class="lctag">L4 last</span> ${fvl.length?(fvl[fvl.length-1].out||'<span class="inside-now">⏱ still inside</span>'):'interior only — no crossing'} ${span?`<span class="hint">(${span})</span>`:''}</div>`);
+  }
+  return `<div class="lcbox">${rows.join('')}</div>`;
+}
+function openPid(kind, pid){
+  if(!REV) return;
+  const list = kind==='staff' ? (REV.staff_cards||[]) : (REV.customer_cards||[]);
+  const c = list.find(x=>String(x.pid)===String(pid));
+  if(!c) return;
+  const badge = `<span class="pidbadge ${kind==='staff'?'staff':'cust'}">#${c.pid}</span>`;
+  const grp = c.group?` <span class="pidbadge grp">#${c.group}</span>`:'';
+  const name = kind==='staff' ? ` <b>${c.name||(c.pid==='S?'?'unassigned':'(unnamed)')}</b>` : '';
+  const demo = c.demo?` · <span class="demo">${c.demo}</span>`:'';
+  $('#pidTitle').innerHTML = `${badge} <span class="hint">${kind}</span>${name}${grp}${demo}`;
+  const sights = (c.crops||[]).slice().sort((a,b)=>String(a.ist||'').localeCompare(String(b.ist||'')));
+  const entTrack = (c.entry && c.entry[1]!=null) ? c.entry[1] : null;   // door-entry track anchors a customer's #C
+  const tl = sights.map(s=>{
+    const isDoor = (s.camera==='C05');
+    // ✗ "not this person → pool": staff = un-staff that track; customer = un-link an interior crop (door crop anchors the #C, so no ✗)
+    const canRemove = !RO && (kind==='staff' || (kind==='customer' && !isDoor && entTrack!=null));
+    const x = canRemove ? `<button class="cropx" title="not this person — move to the unassigned pool" onclick="event.stopPropagation();pidUnassign('${kind}','${c.pid}','${s.window}','${s.camera}',${s.track},${entTrack},this)">✗</button>` : '';
+    return `<figure>${cropImg(s.crop)}<figcaption>${s.camera||''} ${s.ist||''}<br>#${s.track}<br><span class="cropdim" title="crop pixel size (w×h)"></span></figcaption>${x}</figure>`;
+  }).join('') || '<p class="empty">no crops</p>';
+  let extra = '';
+  if (kind==='staff'){
+    const fvl = c.floor_visits||[];
+    const fv = fvl.length?`<div class="hint" style="margin:6px 0">🚪 C05 floor-visits: ${fvl.map(v=>`<b>${v.in||'—'}</b>${v.out?(' → '+v.out):' → still in'}`).join(' &nbsp;·&nbsp; ')}</div>`:'';
+    const allday = (!RO && c.employee_id)?`<div style="margin:6px 0"><button onclick="closePid();openMatches(${c.employee_id})">🔍 all-day sightings</button></div>`:'';
+    extra = fv + allday;
+  }
+  const verify = (kind==='customer' && !RO && c.entry) ? ` <button class="xtrack" onclick="showFrame('${c.entry[0]}','C05',${c.entry[1]})">🚪 verify crossing</button>` : '';
+  const removeHint = !RO ? ' · <span style="color:var(--dim)">hover a crop → ✗ to move it to the unassigned pool</span>' : '';
+  $('#pidBody').innerHTML = `<div style="margin:0 0 10px">${proofPair(c)} <span class="hint">— check-in → check-out proof</span>${verify}</div>`
+    + lifecycleHTML(kind,c) + extra
+    + `<div id="pidmatches"></div>`                                  // per-PID training section — prominent, near the top
+    + `<div class="hint" style="margin:14px 0 4px">📸 every sighting (camera · time · px) — click to enlarge${removeHint}</div><div class="sgrp">${tl}</div>`;
+  $('#pidModal').classList.add('show');
+  loadPidMatches(kind, c.pid);                 // async: the drawer opens instantly, the look-alike training strip fills in
+}
+async function pidUnassign(kind, pid, window, camera, track, entTrack, btn){   // "not this person → pool" (reversible)
+  if(RO) return;
+  let d;
+  if(kind==='staff'){            // un-staff that track -> drops back to customer/pool, re-runs L4
+    d=await fetch('/api/hitl/unstaff-track',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({window,track})}).then(r=>r.json()).catch(()=>null);
+  } else {                       // customer interior crop -> un-link from the #C (xcamdiff) -> back to 'inside' pool
+    d=await fetch('/api/hitl/reid/cross-decision',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({window,a_track:entTrack,cam:camera,b_track:track,same:false})}).then(r=>r.json()).catch(()=>null);
+  }
+  if(!d) return;
+  DIRTY_WINS.add(window);        // count/cards recompute lazily on next load
+  const fig=btn&&btn.closest('figure');
+  if(fig){ fig.style.opacity='.4'; fig.style.transition='opacity .2s'; btn.outerHTML='<span class="cropxdone">removed ✓</span>'; }
+}
+async function loadPidMatches(kind, pid){      // L3 strengthening: every crop the TRAINED matcher says looks like this person
+  const box=document.getElementById('pidmatches'); if(!box) return;
+  box.innerHTML='<p class="hint">🪪 searching look-alikes with the trained model…</p>';
+  const date=(WIN||'').split('_')[0]||'';
+  const r=await fetch(`/api/hitl/reid/matches?date=${date}&pid=${encodeURIComponent(pid)}`).then(x=>x.json()).catch(()=>null);
+  const box2=document.getElementById('pidmatches'); if(!box2) return;   // drawer may have closed/re-rendered
+  if(!r){ box2.innerHTML=''; return; }
+  const ms=r.matches||[];
+  const list = kind==='staff' ? ((REV&&REV.staff_cards)||[]) : ((REV&&REV.customer_cards)||[]);
+  const me = list.find(x=>String(x.pid)===String(pid));
+  const meEnt=(me&&me.entry)||[null,null];
+  const meEmp=(kind==='staff')?(me&&me.employee_id):null;     // enroll target for staff ✓
+  const meCrop=(me&&(me.best_crop||me.in_crop||((me.crops||[])[0]||{}).crop))||'';   // staff rep crop (the pair's 'a' side)
+  const thr=Math.round((r.threshold||0)*100);
+  const cell=m=>{
+    const img=(m.crop&&!HIDE)?`<img src="${cropURL(m.crop)}" class="gthumb" loading="lazy" decoding="async" style="cursor:zoom-in" onclick="event.stopPropagation();zoom('${m.crop}')">`:'<div class="gthumb nocrop">👤</div>';
+    const badge=`<span class="pidbadge ${m.kind==='staff'?'staff':'cust'}">#${m.pid}</span>`;
+    let act='';
+    if(!RO && m.track!=null){
+      if(kind==='customer' && m.kind==='customer' && meEnt[1]!=null){
+        act = m.verdict
+          ? `<br><span class="matchact"><span class="hint">${m.verdict==='same'?'✓ merged':'✗ kept separate'}</span> <button class="miniconfirm" title="undo this mark" onclick="pidMatchRevoke('${meEnt[0]}',${meEnt[1]},'${m.window}',${m.track},'${m.crop||''}',${m.verdict==='same'},this)">↩ undo</button></span>`
+          : `<br><span class="matchact">${matchActBtns(meEnt[0],meEnt[1],m.window,m.track,m.crop,m.pid,pid)}</span>`;
+      } else if(kind==='staff' && meEmp){
+        act = m.verdict
+          ? `<br><span class="matchact"><span class="hint">${m.verdict==='same'?'✓ same — enrolled':'✗ different'}</span> <button class="miniconfirm" title="undo this mark" onclick="staffMatchRevoke(${meEmp},'${m.window}',${m.track},'${m.crop||''}','${meCrop}',${m.verdict==='same'},this)">↩ undo</button></span>`
+          : `<br><span class="matchact">${staffMatchBtns(meEmp,m.window,m.track,m.crop,meCrop)}</span>`;
+      }
+    }
+    return `<figure>${img}<figcaption>${badge}${m.name?' '+m.name:''} <b>${Math.round(m.sim*100)}%</b><br>${m.camera||''} ${m.ist||''}${act}</figcaption></figure>`;
+  };
+  const headTxt = kind==='staff'
+    ? `🎯 <b>Train on look-alikes for #${pid}</b>${me&&me.name?' ('+me.name+')':''} — ${ms.length} crop${ms.length!==1?'s':''} the model thinks match this staff member (≥ <b>${thr}%</b>). <b>✓</b> = same (enrolls + counts as a marking); <b>✗</b> = different. Both train & show in Mark &amp; Train.`
+    : `🎯 <b>Train on look-alikes for #${pid}</b> — ${ms.length} crop${ms.length!==1?'s':''} ≥ <b>${thr}%</b>. <b>✓</b> merges into #${pid}; <b>✗</b> keeps separate. Both train the model.`;
+  let body = ms.length
+    ? `<div class="trainhdr">${headTxt}</div><div class="sgrp">${ms.map(cell).join('')}</div>`
+    : `<div class="trainhdr">🎯 <b>Train on look-alikes for #${pid}</b> — none ≥ ${thr}% yet${r.note?' · '+r.note:''}. Lower-confidence matches surface as the model fine-tunes.</div>`;
+  const st=await fetch(`/api/hitl/reid/status?date=${date}`).then(x=>x.json()).catch(()=>null);   // markings counter + train-now
+  const box3=document.getElementById('pidmatches'); if(!box3) return;
+  if(st) REID_STATUS=st;
+  if(!RO && st) body += `<div class="hint" style="margin:8px 0 2px">✏️ your ✓/✗ here train the model — <span class="reidcount">${reidCountTxt()}</span> <button class="miniconfirm" onclick="closePid();showTab('reid');reidTrain()">🎓 train now</button></div>`;
+  box3.innerHTML=body;
+}
+function matchActBtns(aw,at,bw,bt,bcrop,mpid,pid){   // ✓ same / ✗ diff — factored so ↩ undo can put them back
+  const t = mpid?` — merge #${mpid} into #${pid}`:'';
+  return `<button class="miniconfirm" title="same person${t}" onclick="pidMatchDecide('${aw}',${at},'${bw}',${bt},'${bcrop||''}',true,this)">✓ same</button>`
+    + `<button class="miniconfirm" title="different people" onclick="pidMatchDecide('${aw}',${at},'${bw}',${bt},'${bcrop||''}',false,this)">✗ diff</button>`;
+}
+async function pidMatchDecide(aw,at,bw,bt,bcrop,same,btn){   // same decision flow as the trainer: ✓ merges b into the open PID
+  const d=await fetch('/api/hitl/reid/decision',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({a_window:aw,a_track:at,b_window:bw,b_track:bt,b_crop:bcrop||null,same})}).then(r=>r.json()).catch(()=>null);
+  if(!d) return;
+  if(d.already) return;                          // idempotent: already decided this way — don't double-count
+  if(d.stale) DIRTY_WINS.add(bw);
+  bumpReidMarked(same);
+  const box=btn&&btn.closest('.matchact');
+  if(box) box.innerHTML=`<span class="hint">${same?'✓ merged':'✗ kept separate'}</span> <button class="miniconfirm" title="undo this mark" onclick="pidMatchRevoke('${aw}',${at},'${bw}',${bt},'${bcrop||''}',${same},this)">↩ undo</button>`;
+}
+async function pidMatchRevoke(aw,at,bw,bt,bcrop,same,btn){   // reverse a wrongly-marked look-alike, restore ✓/✗
+  const d=await fetch('/api/hitl/reid/revoke',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({a_window:aw,a_track:at,b_window:bw,b_track:bt,b_crop:bcrop||null,same})}).then(r=>r.json()).catch(()=>null);
+  if(!d) return;
+  if(d.stale) DIRTY_WINS.add(bw);                // un-merge restored #b to the count
+  bumpReidMarked(same, -1);                       // give the marking back
+  const box=btn&&btn.closest('.matchact');
+  if(box) box.innerHTML=matchActBtns(aw,at,bw,bt,bcrop);
+}
+function staffMatchBtns(empId,win,track,crop,staffCrop){   // staff look-alike: ✓ same (enroll + mark) / ✗ different — both recorded as ReID markings
+  return `<button class="miniconfirm" title="yes — same staff member · enrolls + counts as a marking" onclick="staffMatchMark(${empId},'${win}',${track},'${crop||''}','${staffCrop||''}',true,this)">✓ same</button>`
+    + `<button class="miniconfirm" title="not them — recorded as a 'different' marking" onclick="staffMatchMark(${empId},'${win}',${track},'${crop||''}','${staffCrop||''}',false,this)">✗ diff</button>`;
+}
+async function staffMatchMark(empId,win,track,crop,staffCrop,same,btn){   // record a per-PID staff verdict -> /reid/staff-mark (counts toward training)
+  const d=await fetch('/api/hitl/reid/staff-mark',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({employee_id:empId,window:win,track,crop:crop||null,staff_crop:staffCrop||null,same})}).then(r=>r.json()).catch(()=>null);
+  if(!d) return;
+  if(d.stale) DIRTY_WINS.add(win);
+  bumpReidMarked(same);                          // live counter + Mark&Train / My markings update
+  const box=btn&&btn.closest('.matchact');
+  if(box) box.innerHTML=`<span class="hint">${same?'✓ same — enrolled':'✗ different'}</span> <button class="miniconfirm" title="undo this mark" onclick="staffMatchRevoke(${empId},'${win}',${track},'${crop||''}','${staffCrop||''}',${same},this)">↩ undo</button>`;
+}
+async function staffMatchRevoke(empId,win,track,crop,staffCrop,same,btn){
+  const d=await fetch('/api/hitl/reid/staff-mark',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({employee_id:empId,window:win,track,revoke:true})}).then(r=>r.json()).catch(()=>null);
+  if(!d) return;
+  if(d.stale) DIRTY_WINS.add(win);
+  bumpReidMarked(same,-1);                        // give the marking back
+  const box=btn&&btn.closest('.matchact');
+  if(box) box.innerHTML=staffMatchBtns(empId,win,track,crop,staffCrop);
+}
+function closePid(){ $('#pidModal').classList.remove('show'); }
 async function unstaffMatch(window, track){
   await fetch('/api/hitl/unstaff-track',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({window, track})}).then(r=>r.json());

@@ -13,7 +13,7 @@ from dataclasses import replace
 
 import yaml
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from hitl.corrections import Correction, LabelStore
 from ingest.nvr import build_rtsp_url, masked
@@ -322,10 +322,17 @@ def index():
 @app.get("/reports", response_class=HTMLResponse)
 @app.get("/train", response_class=HTMLResponse)
 @app.get("/training", response_class=HTMLResponse)
-def review_page():
-    """The review SPA. The URL path selects the tab client-side, so /report and /train are shareable
-    deep-links to the same page (review = reconciliation, report = day/hour report, train = training)."""
-    return (STATIC / "review.html").read_text(encoding="utf-8")
+def review_page(embed: str = ""):
+    """The review SPA — served ONLY inside the Vision Portal. The portal embeds it as an <iframe
+    src="/review?embed=1">, so there is ONE front door. A direct hit on a bare review/report/train
+    deep-link (no embed) bounces INTO the portal (/#review); embed=1 is served as-is, so no loop.
+
+    no-store so the iframe always re-fetches the latest SPA — a top-level refresh otherwise serves a
+    stale cached iframe and frontend edits appear to 'not take'."""
+    if not embed:
+        return RedirectResponse(url="/#review", status_code=307)
+    return HTMLResponse((STATIC / "review.html").read_text(encoding="utf-8"),
+                        headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"})
 
 
 @app.get("/api/state")
