@@ -1999,6 +1999,116 @@ def reid_status(date: str) -> dict:
             "pending": max(0, total - last_trained), "last_version": last_ver, "last_trained_at": last_at}
 
 
+def _review_items(date: str) -> list:
+    """The single review queue: every UNDECIDED uncertain item across the surfaces, normalized + scored.
+    A LIVE VIEW — reads the same producers the ReID belt / All-Detections use and writes through their
+    existing endpoints, so nothing is stored/duplicated and an item decided anywhere drops out next call
+    (verdict-filtered). Ranked so the human clears the highest report-impact first (returning-visitor
+    merges remove a #C → fix the unique-customer overcount)."""
+    items: list = []
+    thr = float((store.active_model() or {}).get("params", {}).get("reid_threshold", 0.62) or 0.62)
+    try:                                                            # 1) same-camera returning-visitor merges — TOP
+        for p in reid_candidates(date, threshold=thr).get("candidates", []):
+            if p.get("verdict"):
+                continue
+            items.append({"type": "reid", "score": float(p.get("sim") or 0),
+                          "crops": [p.get("a_crop"), p.get("b_crop")], "sim": p.get("sim"),
+                          "left": f"#{p.get('a_pid')} · {p.get('a_in') or ''}",
+                          "right": f"#{p.get('b_pid')} · {p.get('b_in') or ''}",
+                          "impact": "same person → merge (−1 customer)",
+                          "action": {"url": "/api/hitl/reid/decision", "verb": "POST", "kind": "samediff",
+                                     "body": {"a_window": p.get("a_window"), "a_track": p.get("a_track"),
+                                              "b_window": p.get("b_window"), "b_track": p.get("b_track"),
+                                              "b_crop": p.get("b_crop")}}})
+    except Exception:
+        pass
+    try:                                                            # 2) cross-camera door↔interior validation
+        for p in reid_cross_camera(date).get("candidates", []):
+            if p.get("verdict"):
+                continue
+            items.append({"type": "xcam", "score": float(p.get("sim") or 0) * 0.9, "cam": p.get("cam"),
+                          "crops": [p.get("door_crop"), p.get("int_crop")], "sim": p.get("sim"),
+                          "left": f"#{p.get('pid') or '?'} · 🚪 {p.get('door_ist') or ''}",
+                          "right": f"{p.get('cam')} · {p.get('int_ist') or ''}",
+                          "impact": "link interior crop to this #C",
+                          "action": {"url": "/api/hitl/reid/cross-decision", "verb": "POST", "kind": "samediff",
+                                     "body": {"window": p.get("window"), "a_track": p.get("a_track"),
+                                              "cam": p.get("cam"), "b_track": p.get("b_track")}}})
+    except Exception:
+        pass
+    sm_decided = {(w, t) for (_e, w, t) in _staff_marks(date)}      # weak-staff already resolved via /reid/staff-mark
+    for win in _day_windows(date):
+        try:                                                        # 3) weak staff (0.60–0.72) — visits.json carries emp_id + sim
+            sj = json.loads((OUTPUTS / win / "visits.json").read_text(encoding="utf-8")).get("staff", [])
+        except Exception:
+            sj = []
+        for st in sj:
+            tk = st.get("track")
+            if not st.get("weak") or st.get("employee_id") is None or tk is None or (win, tk) in sm_decided:
+                continue
+            items.append({"type": "weak_staff", "score": float(st.get("sim") or 0.66),
+                          "crops": [st.get("crop")], "sim": st.get("sim"),
+                          "left": f"weak staff · emp #{st.get('employee_id')}", "right": st.get("ist") or "",
+                          "impact": "confirm staff vs keep customer",
+                          "action": {"url": "/api/hitl/reid/staff-mark", "verb": "POST", "kind": "samediff",
+                                     "body": {"employee_id": st.get("employee_id"), "window": win,
+                                              "track": tk, "crop": st.get("crop")}}})
+        try:                                                        # 4) to_review / on_hold dets (un-categorised)
+            dets = _classify_detections(win, with_dims=False)
+        except Exception:
+            dets = []
+        for d in dets:
+            if d.get("confirmed") or d.get("determination") not in ("to_review", "on_hold"):
+                continue
+            items.append({"type": "review_det", "score": 0.2 + min(0.15, (d.get("dur_s") or 0) / 600.0),
+                          "crops": [d.get("crop")], "sim": None,
+                          "left": f"{d.get('camera')} · {d.get('ist') or ''}", "right": d.get("determination"),
+                          "impact": "categorize this detection",
+                          "action": {"url": "/api/hitl/allocate", "verb": "POST", "kind": "category",
+                                     "body": {"window": win, "camera": d.get("camera"), "track": d.get("track"),
+                                              "crop": d.get("crop")},
+                                     "categories": ["customer", "staff", "passby", "not_person"]}})
+    items.sort(key=lambda x: -x["score"])
+    return items
+
+
+def _review_counts(date: str, items: list | None = None) -> dict:
+    """Queue length + by-type breakdown. Shared by /review/queue and /accuracy so the two never diverge."""
+    items = _review_items(date) if items is None else items
+    by_type: dict = {}
+    for it in items:
+        by_type[it["type"]] = by_type.get(it["type"], 0) + 1
+    return {"uncertain": len(items), "by_type": by_type}
+
+
+_REVIEW_DET_CAP = 25       # render-cap the low-value un-categorised-door tail so the queue stays actionable
+
+
+@router.get("/review/queue")
+def review_queue(date: str) -> dict:
+    """Single ranked review queue (Phase 1): all undecided uncertain items across surfaces, score-desc so
+    the human clears the highest report-impact first (returning-visitor merges → fix the overcount). Live
+    view — nothing stored; clearing an item uses the existing endpoints, so it reflects everywhere and drops
+    out on next load. The bulky `review_det` tail is render-capped, but `counts` keep the TRUE totals (so
+    the Phase-2 'sent to review' metric is honest)."""
+    if not date or "/" in date or "\\" in date or ".." in date:
+        raise HTTPException(400, "bad date")
+    full = _review_items(date)
+    counts = _review_counts(date, full)                            # TRUE totals (uncapped) for the metric
+    counts["cleared"] = reid_status(date).get("total", 0)          # decided-so-far (reuse the markings tally)
+    rendered, rd = [], 0                                            # cap only the review_det tail in the rendered list
+    for it in full:
+        if it["type"] == "review_det":
+            rd += 1
+            if rd > _REVIEW_DET_CAP:
+                continue
+        rendered.append(it)
+    counts["rendered"] = len(rendered)
+    counts["review_det_total"] = counts["by_type"].get("review_det", 0)
+    counts["review_det_capped_at"] = _REVIEW_DET_CAP
+    return {"items": rendered, "counts": counts, "date": date}
+
+
 _INT_CROP_CACHE: dict = {}
 
 

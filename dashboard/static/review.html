@@ -247,6 +247,13 @@
   .reidsec > .reidsecbody { padding:2px 12px 12px; }
   .markrow { display:flex; align-items:center; gap:6px; padding:4px 6px; border-radius:6px; }
   .markrow:hover { background:rgba(127,127,127,.06); }
+  /* 🎯 Review Queue — per-item type tag */
+  .qitem { align-items:center; }
+  .qtag { display:inline-block; font-size:10px; font-weight:700; border-radius:6px; padding:2px 7px; margin-right:4px; white-space:nowrap; }
+  .qtag-reid { background:rgba(55,184,106,.16); color:var(--ok); border:1px solid rgba(55,184,106,.4); }
+  .qtag-xcam { background:rgba(124,92,255,.16); color:#7c5cff; border:1px solid rgba(124,92,255,.4); }
+  .qtag-weak_staff { background:rgba(227,160,43,.16); color:var(--warn); border:1px solid rgba(227,160,43,.45); }
+  .qtag-review_det { background:rgba(120,120,120,.14); color:var(--mut,#6b7280); border:1px solid rgba(120,120,120,.4); }
   .dupe-pair.reid img { width:52px; height:78px; }
   .impactgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; margin:8px 0 4px; }
   .impactgrid > div { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 10px; text-align:center; }
@@ -303,6 +310,7 @@
 <main>
   <div class="tabs">
     <button class="tab active" onclick="showTab('review',this)">📋 Review</button>
+    <button class="tab" onclick="showTab('queue',this)">🎯 Queue</button>
     <button class="tab" onclick="showTab('report',this)">📊 Report</button>
     <button class="tab" onclick="showTab('train',this)">🧠 Training</button>
     <button class="tab" onclick="showTab('reid',this)">🪪 ReID</button>
@@ -344,6 +352,7 @@
     </div>
   </details>
   </div><!-- /tab-review -->
+  <div id="tab-queue" style="display:none"><div id="queue"></div></div>
   <div id="tab-report" style="display:none"><div id="report"></div></div>
   <div id="tab-train" style="display:none"><div id="train"></div></div>
   <div id="tab-reid" style="display:none"><div id="reid"></div></div>
@@ -497,11 +506,13 @@ function showTab(name, btn){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   if (btn) btn.classList.add('active');
   $('#tab-review').style.display = name==='review' ? '' : 'none';
+  $('#tab-queue').style.display  = name==='queue'  ? '' : 'none';
   $('#tab-report').style.display = name==='report' ? '' : 'none';
   $('#tab-train').style.display  = name==='train'  ? '' : 'none';
   $('#tab-reid').style.display   = name==='reid'   ? '' : 'none';
   $('#tab-logs').style.display   = name==='logs'   ? '' : 'none';
   $('#tab-staff').style.display  = name==='staff'  ? '' : 'none';
+  if (name==='queue') loadQueue();
   if (name==='report') loadReport();
   if (name==='train') loadTraining();
   if (name==='reid') loadReid();
@@ -781,6 +792,72 @@ async function markingUndo(i){
   bumpReidMarked(same, -1);
   const row=document.getElementById('mrow-'+i);
   if(row){ row.style.opacity='0'; row.style.transition='opacity 0.3s'; setTimeout(()=>row.remove(),320); }
+}
+// --- 🎯 Review Queue: ONE ranked list of every uncertain call (live view over the same store the ReID belt / All-Detections use) ---
+const QUEUE_PAGE = 12;                 // visible at a time — conveyor belt (reuses the ReID-belt pattern)
+let QUEUE_ITEMS = [], QUEUE_WAIT = []; // QUEUE_WAIT = indices not yet shown
+const QTYPE = {reid:'👥 returning?', xcam:'🎥 cross-cam', weak_staff:'👤 staff?', review_det:'❓ categorise'};
+function qThumb(c){ return (c&&!HIDE)?`<img src="${cropURL(c)}" onclick="event.stopPropagation();zoom('${c}')">`:'<div class="gthumb nocrop" style="width:52px;height:78px">👤</div>'; }
+function queueActBtns(i){
+  const it=QUEUE_ITEMS[i]||{}; const a=it.action||{};
+  if(a.kind==='category'){
+    const lbl={customer:'🙋 customer',staff:'👤 staff',passby:'🚶 pass-by',not_person:'🚫 not person'};
+    return (a.categories||[]).map(c=>`<button class="miniconfirm" onclick="queueDecide(${i},{category:'${c}'})" title="${c}">${lbl[c]||c}</button>`).join('');
+  }
+  const yes=it.type==='weak_staff'?'✓ yes, staff':'✓ same', no=it.type==='weak_staff'?'✗ not them':'✗ different';
+  return `<button class="ok" onclick="queueDecide(${i},{same:true})">${yes}</button><button onclick="queueDecide(${i},{same:false})">${no}</button>`;
+}
+function queueItemHTML(i){
+  const it=QUEUE_ITEMS[i]; if(!it||it._done) return '';
+  const cr=it.crops||[];
+  const right = cr.length>1 ? `<span class="vs">↔</span>${qThumb(cr[1])}<span class="hint">${it.right||''}</span>` : `<span class="hint">${it.right||''}</span>`;
+  const sim = it.sim!=null ? `<span class="gap">${Math.round(it.sim*100)}% alike</span>` : '';
+  return `<div class="dupe-pair reid qitem" id="qitem-${i}">
+    <span class="qtag qtag-${it.type}">${QTYPE[it.type]||it.type}</span>
+    ${qThumb(cr[0])}<span class="hint">${it.left||''}</span>${right}
+    ${sim} <span class="hint" style="font-size:11px">${it.impact||''}</span>
+    <span class="qact" id="qact-${i}">${queueActBtns(i)}</span></div>`;
+}
+function queueAppendNext(){
+  let idx;
+  while(QUEUE_WAIT.length){ idx=QUEUE_WAIT.shift(); if(QUEUE_ITEMS[idx]&&!QUEUE_ITEMS[idx]._done) break; idx=undefined; }
+  if(idx===undefined) return;
+  const div=$('#qitems'); if(!div) return;
+  const tmp=document.createElement('div'); tmp.innerHTML=queueItemHTML(idx);
+  const row=tmp.firstElementChild; if(!row) return;
+  row.style.opacity='0'; row.style.transform='translateY(14px)'; div.appendChild(row);
+  requestAnimationFrame(()=>{ row.style.transition='opacity .28s,transform .28s'; row.style.opacity='1'; row.style.transform=''; });
+}
+async function loadQueue(){
+  const box=$('#queue'); if(!box) return;
+  box.innerHTML='<p class="hint">building the review queue…</p>';
+  const date=(WIN||'').split('_')[0]||'';
+  const r=await fetch(`/api/hitl/review/queue?date=${date}`).then(x=>x.json()).catch(()=>null);
+  if(!r){ box.innerHTML='<p class="empty">could not load the queue</p>'; return; }
+  QUEUE_ITEMS=r.items||[]; const c=r.counts||{};
+  const vis=QUEUE_ITEMS.map((_,i)=>i).slice(0,QUEUE_PAGE);
+  QUEUE_WAIT=QUEUE_ITEMS.map((_,i)=>i).slice(QUEUE_PAGE);
+  const rows=vis.map(i=>queueItemHTML(i)).join('');
+  const tail = (c.review_det_total>c.review_det_capped_at) ? ` · +${c.review_det_total-c.review_det_capped_at} un-categorised door dets (bulk-review in All-Detections)` : '';
+  box.innerHTML=`<div class="rephead"><div class="rtitle">🎯 Review Queue <span class="hint">— clear the uncertain calls hardest-first; the report is accurate when this is empty</span></div></div>
+    <div class="handoffbox">
+      <div class="reidctl"><b id="qcount">${QUEUE_ITEMS.length}</b> to review${c.uncertain>QUEUE_ITEMS.length?` (of ${c.uncertain} total)`:''} · <b>${c.cleared||0}</b> already decided${tail}
+        <div class="hint" style="margin-top:3px">order: returning-visitor merges → cross-camera → weak staff → categorise. Each decision reflects everywhere (ReID tab, All-Detections, the count).</div></div>
+      <div id="qitems">${rows||'<p class="empty">✅ nothing to review — the day is publish-ready.</p>'}</div>
+    </div>`;
+}
+async function queueDecide(i, extra){
+  const it=QUEUE_ITEMS[i]; if(!it||RO) return;
+  const a=it.action||{}; const body={...(a.body||{}), ...(extra||{})};
+  const d=await fetch(a.url,{method:a.verb||'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).catch(()=>null);
+  if(!d) return;
+  const w=body.window||body.b_window||body.a_window; if(d.stale && w) DIRTY_WINS.add(w);
+  it._done=true;
+  if(a.kind==='samediff' && extra && extra.same!=null && typeof bumpReidMarked==='function') bumpReidMarked(!!extra.same);  // reflect in §1/§3 counters
+  const qc=$('#qcount'); if(qc) qc.textContent=Math.max(0,(parseInt(qc.textContent)||1)-1);
+  const row=document.getElementById('qitem-'+i);
+  if(row){ row.style.transition='opacity .22s'; row.style.opacity='0'; setTimeout(()=>{ row.remove(); queueAppendNext(); }, 240); }
+  else queueAppendNext();
 }
 async function loadStaff(){     // 👥 Staff tab: READ-ONLY gallery — enrolled staff (S#) + unassigned (S?) · every day crop ✋/🤖 tagged
   const box=$('#staffTab'); if(!box) return;
