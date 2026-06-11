@@ -2316,6 +2316,108 @@ def _auto_baseline(date: str):
         return None
 
 
+def _pid_confidence(date: str) -> dict:
+    """Per customer entry (win,in_track) -> the machine's OWN confidence in that PID's identity/exit, fused
+    from the in-window visit confidence (visits.json `confidence`/`how`) + the day-wide exit-match sim.
+    band: high>=0.75 / amber 0.55-0.75 / low <0.55 (presumed or weak). This is the 'PID-with-confidence'."""
+    ex = _exit_resolve(date)
+    vmap = {}
+    for win in _day_windows(date):
+        try:
+            vj = json.loads((OUTPUTS / win / "visits.json").read_text(encoding="utf-8"))
+        except Exception:
+            vj = {}
+        for v in vj.get("visits", []):
+            vmap[(win, v["in_track"])] = v
+    out = {}
+    for (w, t) in _daily_tags(date)["cust"]:
+        conf, basis, esrc, dwell = 0.45, "presumed", "presumed", None
+        if (w, t) in ex:
+            e = ex[(w, t)]
+            esrc, dwell = e.get("source"), e.get("dwell_s")
+            if e.get("source") == "matched" and e.get("sim") is not None:
+                conf, basis = float(e["sim"]), "exit-match sim"
+        elif (w, t) in vmap:
+            v = vmap[(w, t)]
+            esrc, dwell = "visit", v.get("dwell_s")
+            if v.get("confidence") is not None:
+                conf, basis = float(v["confidence"]), (v.get("how") or "visit")
+        band = "high" if conf >= 0.75 else ("amber" if conf >= 0.55 else "low")
+        out[(w, t)] = {"conf": round(conf, 3), "band": band, "basis": basis, "exit_src": esrc, "dwell_s": dwell}
+    return out
+
+
+def _compare_payload(rev: str, pure: str) -> dict:
+    """A/B: reviewed (human truth) vs pure (raw machine). Certifies L2 (crossings must be byte-identical since
+    both read the SAME L1) and scores L3 (the identity/matching gap) with per-PID confidence."""
+    rwin, pwin = _day_windows(rev), _day_windows(pure)
+    pw_by_hh = {w.split("_")[1]: w for w in pwin}
+    l2r = l2p = 0
+    per = []
+    identical = True
+    for r in rwin:
+        hh = r.split("_")[1]
+        p = pw_by_hh.get(hh)
+        cr = sorted((x["track"], x["dir"]) for x in _l2_crossings(r))
+        cp = sorted((x["track"], x["dir"]) for x in _l2_crossings(p)) if p else []
+        l2r += len(cr); l2p += len(cp)
+        same = bool(p) and cr == cp
+        identical = identical and same
+        per.append({"hour": hh, "reviewed": len(cr), "pure": len(cp), "identical": same})
+    L2 = {"reviewed_crossings": l2r, "pure_crossings": l2p,
+          "identical": bool(identical and l2r == l2p), "per_window": per}
+
+    def day(date: str) -> dict:
+        tags = _daily_tags(date)
+        cust, ist = tags["cust"], tags.get("ist", {})
+        conf = _pid_confidence(date)
+        ci = {w: _entry_crop_info(w) for w in _day_windows(date)}
+        rows = []
+        for (w, t), n in cust.items():
+            c = conf.get((w, t), {})
+            rows.append({"pid": f"C{n}", "n": n, "in_ist": ist.get((w, t)),
+                         "crop": (ci.get(w) or {}).get(t, {}).get("crop"),
+                         "conf": c.get("conf"), "band": c.get("band"), "basis": c.get("basis"),
+                         "exit_src": c.get("exit_src"), "dwell_s": c.get("dwell_s")})
+        rows.sort(key=lambda x: x["n"])
+        try:
+            nstaff = len(_cards_from_dets(date)["staff_cards"])
+        except Exception:
+            nstaff = None
+        return {"date": date, "footfall": len(set(cust.values())), "staff": nstaff, "customers": rows}
+
+    R, P = day(rev), day(pure)
+    bands = {"high": 0, "amber": 0, "low": 0}
+    matched = presumed = 0
+    for c in P["customers"]:
+        bands[c.get("band") or "low"] = bands.get(c.get("band") or "low", 0) + 1
+        if c.get("exit_src") == "matched":
+            matched += 1
+        elif c.get("exit_src") == "presumed":
+            presumed += 1
+    score = {"footfall_reviewed": R["footfall"], "footfall_pure": P["footfall"],
+             "gap": P["footfall"] - R["footfall"], "staff_reviewed": R["staff"], "staff_pure": P["staff"],
+             "pure_bands": bands, "pure_matched_exits": matched, "pure_presumed_exits": presumed}
+    return {"reviewed": R, "pure": P, "L2": L2, "scorecard": score}
+
+
+@router.get("/compare/{rev}/{pure}")
+def compare(rev: str, pure: str) -> dict:
+    """Reviewed-vs-pure A/B + L2 certification + L3 capability scorecard (with per-PID confidence)."""
+    for d in (rev, pure):
+        if not d or "/" in d or "\\" in d or ".." in d:
+            raise HTTPException(400, "bad date")
+    return _compare_payload(rev, pure)
+
+
+@router.get("/pipeline-health/{date}")
+def pipeline_health(date: str) -> dict:
+    """Convenience: compare a reviewed date against its '<date>-pure' parallel reprocess."""
+    if not date or "/" in date or "\\" in date or ".." in date:
+        raise HTTPException(400, "bad date")
+    return _compare_payload(date, f"{date}-pure")
+
+
 @router.get("/accuracy/{date}")
 def accuracy(date: str) -> dict:
     """Per-day TRUST instrument (Phase 2): how accurate the auto pass was + how much HITL effort the day needed.

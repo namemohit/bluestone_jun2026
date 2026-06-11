@@ -317,6 +317,7 @@
     <button class="tab" onclick="showTab('reid',this)">🪪 ReID</button>
     <button class="tab" onclick="showTab('logs',this)">📈 Logs</button>
     <button class="tab" onclick="showTab('staff',this)">👥 Staff</button>
+    <button class="tab" onclick="showTab('compare',this)">🔬 Pure</button>
   </div>
   <div id="tab-review">
   <div id="reconLine" class="reconline"></div>
@@ -359,6 +360,7 @@
   <div id="tab-reid" style="display:none"><div id="reid"></div></div>
   <div id="tab-logs" style="display:none"><div id="logs"></div></div>
   <div id="tab-staff" style="display:none"><div id="staffTab"></div></div>
+  <div id="tab-compare" style="display:none"><div id="compareBox"></div></div>
 </main>
 <div id="toast"><b id="toastMsg"></b><button class="undo" onclick="undoLast()">↩ Undo</button><button class="x" onclick="hideToast()">✕</button></div>
 <div id="lightbox" class="lbox" onclick="closeZoom()"><div class="cap">click anywhere or press Esc to close</div><img id="lbimg"></div>
@@ -449,9 +451,14 @@ async function loadWindows() {
   RO = !!r.readonly; HIDE = !!r.hide_faces;
   if (RO) { document.querySelector('header h1').innerHTML = '🛍️ Showroom · Live Results <span style="font-size:11px;color:var(--dim)">(read-only)</span>'; }
   const sel = $('#win');
-  const dates = [...new Set(r.windows.map(w=>String(w.window).split('_')[0]).filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(x)))].sort();
-  const dated = r.windows.filter(w=>/^\d{4}-\d{2}-\d{2}_\d/.test(w.window)); // real processed hours — hides L4_hitl_test & non-date stubs
-  sel.innerHTML = dates.map(dt=>`<option value="${dt}">📅 Whole day · ${dt}</option>`).join('')
+  const DATERE = /^\d{4}-\d{2}-\d{2}(-[a-z]+)?$/;             // real day, OR a tagged parallel day like 2026-06-03-pure
+  const dates = [...new Set(r.windows.map(w=>String(w.window).split('_')[0]).filter(x=>DATERE.test(x)))].sort();
+  const dated = r.windows.filter(w=>/^\d{4}-\d{2}-\d{2}(-[a-z]+)?_\d/.test(w.window)); // real processed hours — hides L4_hitl_test & non-date stubs
+  const dayLabel = dt => {
+    const m = dt.match(/^(\d{4}-\d{2}-\d{2})-([a-z]+)$/);     // tagged parallel day (e.g. -pure)
+    return m ? `🔬 ${m[2]==='pure'?'Pureplay (no HITL)':m[2]} · ${m[1]}` : `📅 Whole day · ${dt}`;
+  };
+  sel.innerHTML = dates.map(dt=>`<option value="${dt}">${dayLabel(dt)}</option>`).join('')
                 + dated.map(w=>`<option value="${w.window}">${w.range || w.window} · ${w.visits} visits</option>`).join('');
   if (r.windows.length) {
     const pool = dated.length ? dated : r.windows;
@@ -513,12 +520,14 @@ function showTab(name, btn){
   $('#tab-reid').style.display   = name==='reid'   ? '' : 'none';
   $('#tab-logs').style.display   = name==='logs'   ? '' : 'none';
   $('#tab-staff').style.display  = name==='staff'  ? '' : 'none';
+  $('#tab-compare').style.display= name==='compare'? '' : 'none';
   if (name==='queue') loadQueue();
   if (name==='report') loadReport();
   if (name==='train') loadTraining();
   if (name==='reid') loadReid();
   if (name==='logs') loadLogs();
   if (name==='staff') loadStaff();
+  if (name==='compare') loadCompare();
 }
 function reportHTML(r){   // the report BODY (KPIs -> footfall -> dwell/hot-leads -> groups -> staff); shared by the Report tab + each hour's review
   const c=r.customers||{}, g=c.groups||{}, e=r.employees||{}, dw=c.dwell_min||{};
@@ -776,6 +785,37 @@ async function loadLogs(){     // 📈 Logs tab: every training run + the impact
   $('#logs').innerHTML=`<div class="rephead"><div class="rtitle">📈 Training log <span class="hint">— every training run + the impact it created · review your markings in the 🪪 ReID tab</span></div></div>
     <div id="accCard"><p class="hint">📊 measuring day accuracy + separation…</p></div>${cards||'<p class="empty">no training runs yet — train in the 🪪 ReID tab</p>'}`;
   loadAccCard((WIN||'').split('_')[0]||'');   // lazy — the /accuracy call is heavy
+}
+async function loadCompare(){     // 🔬 Pure tab: raw-machine (parallel pureplay reprocess) vs human-reviewed truth
+  const box=$('#compareBox'); if(!box) return;
+  const date=(WIN||'').split('_')[0]||'';
+  box.innerHTML='<p class="hint">measuring pureplay vs reviewed…</p>';
+  const c=await fetch('/api/hitl/compare/'+date+'/'+date+'-pure').then(r=>r.json()).catch(()=>null);
+  if(!c||!c.L2){ box.innerHTML=`<p class="empty">no pureplay reprocess for ${date} — run <code>python -m batch.reprocess_pure --date ${date}</code></p>`; return; }
+  const L2=c.L2, s=c.scorecard, l2ok=L2.identical;
+  const col=b=>b==='high'?['#dcfce7','#166534']:b==='amber'?['#fef3c7','#b45309']:['#fee2e2','#b91c1c'];
+  const chip=b=>{const x=col(b);return `<span style="background:${x[0]};color:${x[1]};border-radius:6px;padding:0 6px;font-size:11px;font-weight:600">${b}</span>`;};
+  const thumb=cr=>(cr&&!HIDE)?`<img src="${cropURL(cr)}" style="width:38px;height:54px;object-fit:cover;border-radius:4px;cursor:zoom-in" onclick="zoom('${cr}')">`:'<div class="rthumb nocrop" style="width:38px;height:54px">👤</div>';
+  const row=(r,wc)=>`<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #f1f5f9">
+     ${thumb(r.crop)}<b>${r.pid}</b> <span class="hint">${r.in_ist||''}</span>
+     ${wc?`${chip(r.band)} <span class="hint" title="${r.basis||''}">${r.conf!=null?Math.round(r.conf*100)+'%':''} · ${r.exit_src||''}${r.dwell_s?' · '+Math.round(r.dwell_s/60)+'m':''}</span>`:''}</div>`;
+  const N=v=>`<span style="font-size:22px;font-weight:700">${v}</span>`;
+  box.innerHTML=`
+   <div class="rephead"><div class="rtitle">🔬 Pureplay vs Reviewed <span class="hint">— raw machine (zero HITL) vs your human-reviewed truth · ${date}</span></div></div>
+   <div style="background:${l2ok?'#dcfce7':'#fee2e2'};border:1px solid ${l2ok?'#86efac':'#fca5a5'};color:${l2ok?'#166534':'#b91c1c'};border-radius:8px;padding:8px 12px;margin:8px 0;font-weight:600">
+     ${l2ok?'✓':'✗'} L2 certified ${l2ok?'200%':'MISMATCH'} — ${L2.reviewed_crossings} door crossings, reviewed = pure ${l2ok?'(byte-identical → L2 is pure geometry, HITL-independent)':'(DIFFER — investigate)'}
+   </div>
+   <div style="display:flex;gap:26px;flex-wrap:wrap;margin:12px 0 6px">
+     <div>${N(s.footfall_reviewed+' → '+s.footfall_pure)}<div class="hint">customers: reviewed → raw machine (+${s.gap} over-count)</div></div>
+     <div>${N(s.staff_reviewed+' / '+s.staff_pure)}<div class="hint">staff: reviewed / pure</div></div>
+     <div>${N(s.pure_matched_exits+' / '+s.pure_presumed_exits)}<div class="hint">pure exits: matched / presumed</div></div>
+     <div>${N(s.pure_bands.high+' · '+s.pure_bands.amber+' · '+s.pure_bands.low)}<div class="hint">pure confidence: 🟢high · 🟡amber · 🔴low</div></div>
+   </div>
+   <p class="hint" style="margin:4px 0 12px">The raw machine forms <b>${s.footfall_pure}</b> PIDs and flags its own confidence — <b>${s.pure_bands.low}</b> are low (presumed/weak). L3's job is to collapse the +${s.gap} over-count via ReID + spatial + temporal. L2 (below) is provably perfect, so trust starts there.</p>
+   <div style="display:flex;gap:24px;align-items:flex-start">
+     <div style="flex:1;min-width:0"><h4 style="margin:6px 0">✓ Reviewed (human truth) · ${c.reviewed.footfall} #C</h4>${c.reviewed.customers.map(r=>row(r,false)).join('')||'<p class="empty">none</p>'}</div>
+     <div style="flex:1;min-width:0"><h4 style="margin:6px 0">🤖 Pure machine · ${c.pure.footfall} #C <span class="hint">(each carries confidence)</span></h4>${c.pure.customers.map(r=>row(r,true)).join('')||'<p class="empty">none</p>'}</div>
+   </div>`;
 }
 async function loadAccCard(date){     // 📊 Day accuracy & effort card (Phase 2) at the top of the Logs tab
   const el=document.getElementById('accCard'); if(!el||!date) return;
