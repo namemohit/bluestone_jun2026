@@ -490,7 +490,7 @@ let REV = null, DETS_WIN = null;
 async function load(){
   WIN = $('#win').value || WIN;
   LS.set('win', WIN);                       // remember the chosen view across refreshes
-  DAY = /^\d{4}-\d{2}-\d{2}$/.test(WIN);   // a date (no _HHMM) = whole-day rollup
+  DAY = /^\d{4}-\d{2}-\d{2}(-[a-z]+)?$/.test(WIN);   // a date (or a tagged parallel day like 2026-06-03-pure) = whole-day rollup
   REV = await fetch(DAY ? `/api/hitl/visits-day/${WIN}` : `/api/hitl/visits/${WIN}`).then(r=>r.json());
   renderReview();
   loadAttendance();
