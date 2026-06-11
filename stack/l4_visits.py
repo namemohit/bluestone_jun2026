@@ -410,7 +410,9 @@ def main() -> None:
                            "crop": (s.get("int_crop") or s["crop"]).replace("\\", "/")}
                           for s in sorted(still_inside, key=lambda z: z["ts"])],
         "pre_window_exits": [{"track": e["track"], "ist": ist(e["ts"]),
-                              "crop": (e.get("int_crop") or e["crop"]).replace("\\", "/")}
+                              "crop": (e.get("int_crop") or e["crop"]).replace("\\", "/"),
+                              # the C05 same-camera OUT crop -> day-level exit matching compares C05<->C05, not C05<->C14
+                              "door_crop": e["crop"].replace("\\", "/")}
                              for e in sorted(unmatched_out, key=lambda z: z["ts"])],
         # gallery-recognised staff this window (employee_id set) -> attendance, no manual click
         "staff": sorted(auto_staff, key=lambda z: z["ist"]),

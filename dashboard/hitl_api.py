@@ -555,6 +555,9 @@ def _exit_resolve(date: str) -> dict:
     GRACE = float(params.get("exit_grace_s", 60))
     reid_weight = float(params.get("reid_weight", 0.0))        # >0 -> ReID gate among time-eligible candidates (off on this footage)
     exit_floor = float(params.get("reid_exit_floor", 0.55))    # an OUT must LOOK like the entry to match it -> rejects wrong-person exits
+    exit_same_cam = bool(params.get("exit_same_cam", True))    # compare entry C05 <-> OUT C05 door crop (not the C14 interior crop -> apples-to-apples)
+    exit_margin = float(params.get("exit_match_margin", 0.05)) # best eligible open must beat 2nd-best by this, else presume (don't guess)
+    exit_require_emb = bool(params.get("exit_require_emb", False))   # no-embedding OUT -> presumed, not a blind FIFO grab
     merge = _handoff_merges(date)["merge"]
     opens, outs = [], []
     for win in _day_windows(date):
@@ -589,32 +592,45 @@ def _exit_resolve(date: str) -> dict:
             opens.append({"key": key, "in_s": in_s, "last_s": last_s, "crop": info.get("crop")})
         for x in vj.get("pre_window_exits", []):
             if x.get("ist"):
-                outs.append({"out_s": secs(x["ist"]), "ist": x["ist"], "crop": (x.get("crop") or "").replace("\\", "/")})
-    opens.sort(key=lambda o: o["in_s"])                        # FIFO: earliest-entered exits first
+                outs.append({"out_s": secs(x["ist"]), "ist": x["ist"], "window": win, "track": x.get("track"),
+                             "crop": (x.get("crop") or "").replace("\\", "/"),
+                             "door_crop": (x.get("door_crop") or "").replace("\\", "/")})
+    opens.sort(key=lambda o: o["in_s"])                        # FIFO tiebreak: earliest-entered first
     outs.sort(key=lambda x: x["out_s"])
+    import numpy as np
     exits, used = {}, [False] * len(opens)
     for x in outs:
         elig = [i for i, o in enumerate(opens)
                 if not used[i] and o["in_s"] <= x["out_s"] and (x["out_s"] - o["in_s"]) <= MAX_DWELL]
         if not elig:
             continue
-        xe = _emb_for_crop(x.get("crop")) if (exit_floor > 0 and x.get("crop")) else None
-        if xe is not None:                                     # IDENTITY FLOOR: an exit must look like the entry it closes
-            import numpy as np
+        ecrop = (x.get("door_crop") if exit_same_cam else None) or x.get("crop")   # Layer 2b: C05<->C05, not C05<->C14
+        xe = _emb_for_crop(ecrop) if (exit_floor > 0 and ecrop) else None
+        sim_used = margin_used = None
+        if xe is not None:                                     # IDENTITY FLOOR + margin gate: an exit must LOOK like the entry it closes
             def _esim(i):
                 ce = _emb_for_crop(opens[i].get("crop"))
                 return float(np.dot(xe, ce)) if ce is not None else 1.0    # entry without an embedding -> don't block
             scored = sorted(((i, _esim(i)) for i in elig), key=lambda t: -t[1])
-            scored = [(i, s) for i, s in scored if s >= exit_floor]        # drop clear mismatches (e.g. C4's 0.49 stranger)
+            scored = [(i, s) for i, s in scored if s >= exit_floor]        # drop clear mismatches (the C4 stranger)
             if not scored:
                 continue                                                   # nobody looks like this exit -> leave entries open -> presumed
+            if len(scored) >= 2 and (scored[0][1] - scored[1][1]) < exit_margin:
+                continue                                                   # Layer 2a: too close to call between two opens -> presume, don't guess
             cand = scored[0][0]                                            # best-looking among the time-eligible
+            sim_used = round(scored[0][1], 3)
+            margin_used = round(scored[0][1] - scored[1][1], 3) if len(scored) >= 2 else None
         else:
-            cand = elig[0]                                                  # no OUT embedding -> FIFO fallback (legacy)
+            if exit_require_emb:                                            # Layer 2a: no OUT embedding -> presume, not a blind FIFO grab
+                continue
+            cand = elig[0]                                                  # legacy FIFO fallback
         used[cand] = True
         o = opens[cand]
         exits[o["key"]] = {"out_ist": x["ist"], "dwell_s": round(x["out_s"] - o["in_s"], 1),
-                           "source": "matched", "out_crop": x.get("crop")}   # the door-exit crossing crop -> check-out proof
+                           "source": "matched", "out_crop": x.get("crop"),    # door-exit crossing crop -> check-out proof
+                           "sim": sim_used, "margin": margin_used,            # Layer 3 evidence: how confident was this match
+                           "cross_window": (o["key"][0] != x.get("window")),
+                           "out_window": x.get("window"), "out_track": x.get("track")}
     for i, o in enumerate(opens):                              # residual opens -> presumed exit at last-seen + grace
         if used[i]:
             continue
