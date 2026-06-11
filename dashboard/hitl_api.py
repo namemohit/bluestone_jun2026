@@ -532,6 +532,29 @@ def _ist_from_secs(s) -> str:
     return f"{s // 3600:02d}:{(s % 3600) // 60:02d}:{s % 60:02d}"
 
 
+def _rejected_exits(date: str) -> set:
+    """Human 'this check-out is the wrong person' rejects: {(in_win, in_track, out_win, out_track)} from
+    durable `rejexit-<intrack>-<outwin>-<outtrack>` labels (latest-wins; a 'reset' undoes). _exit_resolve
+    excludes these (entry,out) pairs -> the wrong OUT frees + the entry falls to presumed."""
+    out = {}
+    for win in _day_windows(date):
+        for l in _window_labels(win):
+            vid = str(l.get("visit_id", ""))
+            if not vid.startswith("rejexit-"):
+                continue
+            try:                                               # rejexit-<intrack>-<outwin>-<outtrack> (outwin has dashes -> split first/last)
+                it, rest = vid[len("rejexit-"):].split("-", 1)
+                ow, ot = rest.rsplit("-", 1)
+                key = (win, int(it), ow, int(ot))
+            except ValueError:
+                continue
+            if l.get("verdict") == "reset":
+                out.pop(key, None)
+            else:
+                out[key] = True
+    return set(out)
+
+
 def _exit_resolve(date: str) -> dict:
     """L4 exit resolution (day-wide): close every still-inside customer PID. Pool the unmatched OUTs (per-window
     pre_window_exits) across the whole day and FIFO-match each to the earliest still-inside entry before it
@@ -558,7 +581,10 @@ def _exit_resolve(date: str) -> dict:
     exit_same_cam = bool(params.get("exit_same_cam", True))    # compare entry C05 <-> OUT C05 door crop (not the C14 interior crop -> apples-to-apples)
     exit_margin = float(params.get("exit_match_margin", 0.05)) # best eligible open must beat 2nd-best by this, else presume (don't guess)
     exit_require_emb = bool(params.get("exit_require_emb", False))   # no-embedding OUT -> presumed, not a blind FIFO grab
+    gender_gate = bool(params.get("exit_gender_gate", True))   # reject M<->F contradictions (cheap; LOW coverage - faces rare at the door)
+    gender_conf = float(params.get("exit_gender_conf", 0.70))  # min face-gender confidence to enforce the gate
     merge = _handoff_merges(date)["merge"]
+    rejected = _rejected_exits(date)                            # human 'wrong check-out' rejects -> never re-match these (entry,out) pairs
     opens, outs = [], []
     for win in _day_windows(date):
         ci = _entry_crop_info(win)
@@ -601,9 +627,26 @@ def _exit_resolve(date: str) -> dict:
     exits, used = {}, [False] * len(opens)
     for x in outs:
         elig = [i for i, o in enumerate(opens)
-                if not used[i] and o["in_s"] <= x["out_s"] and (x["out_s"] - o["in_s"]) <= MAX_DWELL]
+                if not used[i] and o["in_s"] <= x["out_s"] and (x["out_s"] - o["in_s"]) <= MAX_DWELL
+                and (o["key"][0], o["key"][1], x.get("window"), x.get("track")) not in rejected]   # Layer 3: human reject
         if not elig:
             continue
+        if gender_gate:                                        # Layer 1: drop M<->F contradictions (a no-op unless BOTH crops have a confident face)
+            xg, xgc = _demo_gender(x.get("door_crop") or x.get("crop"))
+            if xg is None:
+                xg2, xgc2 = _demo_gender(x.get("crop"))         # interior crop is likelier to carry a face than the door crop
+                if xgc2 > xgc:
+                    xg, xgc = xg2, xgc2
+            if xg and xgc >= gender_conf:
+                kept = []
+                for i in elig:
+                    eg, egc = _demo_gender(opens[i].get("crop"))
+                    if eg and egc >= gender_conf and eg != xg:
+                        continue                                # confident opposite genders -> this OUT is not this entry
+                    kept.append(i)
+                elig = kept
+                if not elig:
+                    continue
         ecrop = (x.get("door_crop") if exit_same_cam else None) or x.get("crop")   # Layer 2b: C05<->C05, not C05<->C14
         xe = _emb_for_crop(ecrop) if (exit_floor > 0 and ecrop) else None
         sim_used = margin_used = None
@@ -1858,6 +1901,26 @@ def reid_staff_mark(body: dict) -> dict:
     return {"ok": True, "stale": True}
 
 
+@router.post("/reid/reject-exit")
+def reject_exit(body: dict) -> dict:
+    """Human: 'this check-out is the WRONG person' (the Review Queue's visit_exit ✗). Writes a durable
+    `rejexit-<intrack>-<outwin>-<outtrack>` reject so _exit_resolve never re-matches that (entry,out) pair ->
+    the wrong OUT frees + the entry falls to a presumed exit. revoke=true clears it (latest-wins reset).
+    Mirrors /reid/cross-decision + /unstaff-track. _guard_write bumps _STATE_VERSION -> the exit memo re-runs."""
+    _guard_write()
+    if body.get("same") is True:                               # ✓ 'check-out is correct' -> nothing to persist (dismiss only)
+        return {"ok": True, "stale": False}
+    win, track = body.get("window", ""), body.get("track")
+    ow, ot = body.get("out_window", ""), body.get("out_track")
+    if track is None or ot is None:
+        raise HTTPException(400, "reject-exit needs window+track (entry) and out_window+out_track")
+    _window_dir(win)
+    verdict = "reset" if body.get("revoke") else "reject"
+    store.add_label(win, f"rejexit-{track}-{ow}-{ot}", verdict, in_track=track,
+                    reason=f"{'undo wrong-exit' if body.get('revoke') else 'wrong-exit'}:{ow}:{ot}")
+    return {"ok": True, "stale": True}
+
+
 @router.get("/reid/markings")
 def reid_markings(date: str) -> dict:
     """All human-confirmed ReID pair markings for the markings log in the Logs tab.
@@ -2084,6 +2147,34 @@ def _review_items(date: str) -> list:
                                      "body": {"window": win, "camera": d.get("camera"), "track": d.get("track"),
                                               "crop": d.get("crop")},
                                      "categories": ["customer", "staff", "passby", "not_person"]}})
+    try:                                                            # 5) WRONG CHECK-OUT? uncertain L4 exit matches -> human verifies
+        ap = (store.active_model() or {}).get("params", {}) or {}
+        efloor = float(ap.get("reid_exit_floor", 0.55))
+        eband = float(ap.get("exit_review_band", 0.10)); emarg = float(ap.get("exit_review_margin", 0.08))
+        edwell = float(ap.get("exit_review_dwell_s", 3600))
+        tagc = _daily_tags(date)["cust"]
+        for (iw, it), ex in _exit_resolve(date).items():
+            if ex.get("source") != "matched":
+                continue
+            sim, mg, dw = ex.get("sim"), ex.get("margin"), (ex.get("dwell_s") or 0)
+            borderline = sim is not None and sim < efloor + eband           # only just cleared the floor
+            thin = mg is not None and mg < emarg                            # toss-up between two opens
+            longx = bool(ex.get("cross_window")) and dw > edwell            # long cross-window dwell
+            if not (borderline or thin or longx):
+                continue
+            n = tagc.get((iw, it))
+            ecrop = (_entry_crop_info(iw).get(it) or {}).get("crop")
+            items.append({"type": "visit_exit",
+                          "score": 0.55 + (0.10 if borderline else 0) + (0.05 if longx else 0),   # ranks above weak_staff/review_det
+                          "crops": [ecrop, ex.get("out_crop")], "sim": sim,
+                          "left": (f"#C{n} · 🚪 in" if n else "🚪 in"),
+                          "right": f"🚪 out {ex.get('out_ist') or ''} · {round(dw / 60)}m dwell",
+                          "impact": "wrong check-out corrupts dwell + proof",
+                          "action": {"url": "/api/hitl/reid/reject-exit", "verb": "POST", "kind": "samediff",
+                                     "body": {"window": iw, "track": it,
+                                              "out_window": ex.get("out_window"), "out_track": ex.get("out_track")}}})
+    except Exception:
+        pass
     items.sort(key=lambda x: -x["score"])
     return items
 
@@ -2805,6 +2896,29 @@ def _demo_label(crop) -> str | None:
     age, g = e.get("age"), e.get("gender")
     gi = "M" if g == "male" else "F" if g == "female" else "?"
     return f"{('~' + str((age // 10) * 10) + 's') if age else '?'} · {gi}"
+
+
+def _demo_gender(crop):
+    """(('male'|'female')|None, conf) from the cached face-gender for a crop — for the exit-match gender gate.
+    (None, 0.0) when there's no face/estimate. Reuses the same hot-reloaded _DEMO cache as _demo_label."""
+    if not crop:
+        return None, 0.0
+    f = OUTPUTS / "demographics_cache.json"
+    try:
+        mt = f.stat().st_mtime
+    except Exception:
+        return None, 0.0
+    if mt != _DEMO["mtime"]:
+        try:
+            _DEMO["data"] = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            _DEMO["data"] = {}
+        _DEMO["mtime"] = mt
+    e = _DEMO["data"].get(str(crop).replace("\\", "/"))
+    if not e or not e.get("face"):
+        return None, 0.0
+    g = e.get("gender")
+    return (g if g in ("male", "female") else None), float(e.get("gender_conf") or 0.0)
 
 
 def _passby_count(window) -> int:

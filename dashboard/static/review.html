@@ -824,7 +824,7 @@ async function markingUndo(i){
 // --- 🎯 Review Queue: ONE ranked list of every uncertain call (live view over the same store the ReID belt / All-Detections use) ---
 const QUEUE_PAGE = 12;                 // visible at a time — conveyor belt (reuses the ReID-belt pattern)
 let QUEUE_ITEMS = [], QUEUE_WAIT = []; // QUEUE_WAIT = indices not yet shown
-const QTYPE = {reid:'👥 returning?', xcam:'🎥 cross-cam', weak_staff:'👤 staff?', review_det:'❓ categorise'};
+const QTYPE = {reid:'👥 returning?', xcam:'🎥 cross-cam', weak_staff:'👤 staff?', review_det:'❓ categorise', visit_exit:'🚪 check-out?'};
 function qThumb(c){ return (c&&!HIDE)?`<img src="${cropURL(c)}" onclick="event.stopPropagation();zoom('${c}')">`:'<div class="gthumb nocrop" style="width:52px;height:78px">👤</div>'; }
 function queueActBtns(i){
   const it=QUEUE_ITEMS[i]||{}; const a=it.action||{};
@@ -832,7 +832,8 @@ function queueActBtns(i){
     const lbl={customer:'🙋 customer',staff:'👤 staff',passby:'🚶 pass-by',not_person:'🚫 not person'};
     return (a.categories||[]).map(c=>`<button class="miniconfirm" onclick="queueDecide(${i},{category:'${c}'})" title="${c}">${lbl[c]||c}</button>`).join('');
   }
-  const yes=it.type==='weak_staff'?'✓ yes, staff':'✓ same', no=it.type==='weak_staff'?'✗ not them':'✗ different';
+  const yes=it.type==='weak_staff'?'✓ yes, staff':it.type==='visit_exit'?'✓ correct':'✓ same',
+        no=it.type==='weak_staff'?'✗ not them':it.type==='visit_exit'?'✗ wrong person':'✗ different';
   return `<button class="ok" onclick="queueDecide(${i},{same:true})">${yes}</button><button onclick="queueDecide(${i},{same:false})">${no}</button>`;
 }
 function queueItemHTML(i){
