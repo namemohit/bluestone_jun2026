@@ -33,7 +33,8 @@ def main() -> None:
     ap.add_argument("--checkpoint", type=int, default=500, help="flush the pickle every N crops")
     args = ap.parse_args()
 
-    active = R._active_triplet_weights()
+    aw = R._active_weights()
+    active = f"{aw[0]}:{aw[1]}" if aw else None
     R.reset_osnet()
     print(f"[reembed] active weights: {active or '(stock boxmot OSNet)'}", flush=True)
 

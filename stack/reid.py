@@ -55,10 +55,11 @@ def sim(a, b) -> float:
 # --- OSNet person-ReID (boxmot): person-focused + view-invariant, fine-tunable on site data ---
 _osnet = None
 
-# A promoted contrastive fine-tune (training/finetune_triplet.py) is signalled by a sentinel file
-# holding the absolute weights path. When present, EVERY embedder in every process (dashboard,
-# re-embed, future-day stack) loads that model instead of stock boxmot, so the cache + gallery +
-# live processing all share ONE embedding space. Remove the sentinel to fall back to stock OSNet.
+# A promoted ReID model is signalled by a sentinel file so EVERY embedder in every process
+# (dashboard, re-embed, future-day stack) uses the same model -> cache + gallery + live processing
+# share ONE embedding space. Remove the sentinel to fall back to stock OSNet. Two sentinel forms:
+#   boxmot:<weights_name>   e.g. boxmot:osnet_ain_x1_0_msmt17.pt  (boxmot factory, auto-downloads)
+#   <abs path to .pt>       a local contrastive fine-tune checkpoint (training/finetune_triplet.py)
 import os
 from pathlib import Path
 
@@ -67,16 +68,24 @@ _triplet = None        # (model, dev) for a promoted contrastive osnet, cached
 _triplet_path = None   # which weights file the cached _triplet was built from
 
 
-def _active_triplet_weights():
-    """Path of the promoted contrastive OSNet weights, or None for stock boxmot."""
+def _active_weights():
+    """The promoted model from the sentinel: ('boxmot', name) | ('triplet', path) | None (stock)."""
     try:
         if _ACTIVE_WEIGHTS_FILE.exists():
             p = _ACTIVE_WEIGHTS_FILE.read_text(encoding="utf-8").strip()
+            if p.startswith("boxmot:"):
+                return ("boxmot", p[len("boxmot:"):].strip())
             if p and Path(p).exists():
-                return p
+                return ("triplet", p)
     except Exception:
         pass
     return None
+
+
+def _active_triplet_weights():
+    """Back-compat shim: the promoted contrastive checkpoint path, or None."""
+    aw = _active_weights()
+    return aw[1] if aw and aw[0] == "triplet" else None
 
 
 def _load_triplet(weights):
@@ -111,27 +120,31 @@ def _triplet_embed(crop, weights):
 
 def reset_osnet():
     """Drop cached models so the next embed reloads with the currently-active weights."""
-    global _osnet, _triplet, _triplet_path
-    _osnet = _triplet = _triplet_path = None
+    global _osnet, _osnet_weights, _triplet, _triplet_path
+    _osnet = _osnet_weights = _triplet = _triplet_path = None
+
+
+_osnet_weights = None  # which boxmot weights the cached _osnet was built with
 
 
 def _load_osnet(weights="osnet_x1_0_msmt17.pt"):
-    global _osnet
-    if _osnet is None:
+    global _osnet, _osnet_weights
+    if _osnet is None or _osnet_weights != weights:
         import torch
         from boxmot.reid.core.reid import ReID
         dev = "0" if torch.cuda.is_available() else "cpu"  # boxmot wants "0", not "cuda"
-        _osnet = ReID(weights=weights, device=dev, half=False)
+        _osnet = ReID(weights=Path(weights), device=dev, half=False)
+        _osnet_weights = weights
     return _osnet
 
 
 def osnet_embed(crop):
     if crop is None or getattr(crop, "size", 0) == 0:
         return None
-    w = _active_triplet_weights()
-    if w:                                  # promoted contrastive model is active
-        return _triplet_embed(crop, w)
-    reid = _load_osnet()
+    aw = _active_weights()
+    if aw and aw[0] == "triplet":          # promoted local contrastive checkpoint
+        return _triplet_embed(crop, aw[1])
+    reid = _load_osnet(aw[1] if aw else "osnet_x1_0_msmt17.pt")   # promoted boxmot weights, else stock
     h, w2 = crop.shape[:2]
     feats = reid(crop, boxes=np.array([[0, 0, w2, h]], dtype=float))
     v = np.asarray(feats, dtype="float32").ravel()
