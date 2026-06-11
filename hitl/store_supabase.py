@@ -297,6 +297,22 @@ class SupabaseStore:
                         "from employee_gallery where store_id=%s", (store_id,))
             return [dict(r) for r in cur.fetchall()]
 
+    def get_gallery_with_id(self, store_id: str = "s14") -> list[dict]:
+        """Gallery rows WITH their primary key — needed to re-embed a row in place (UPDATE by id)
+        when a new ReID model is promoted (keeps membership, swaps the vector into the new space)."""
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("select id, employee_id, embedding, crop_url, source_window, source_track "
+                        "from employee_gallery where store_id=%s", (store_id,))
+            return [dict(r) for r in cur.fetchall()]
+
+    def update_gallery_embedding(self, row_id: int, embedding) -> None:
+        """Replace ONE gallery row's embedding in place (no delete) — used to re-embed the staff
+        gallery into a newly-promoted model's space so staff matching stays in one space."""
+        emb_list = embedding.tolist() if hasattr(embedding, "tolist") else [float(x) for x in embedding]
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("update employee_gallery set embedding=%s where id=%s",
+                        (json.dumps(emb_list), row_id))
+
     def get_gallery_meta(self, store_id: str = "s14") -> list[dict]:
         """Gallery rows WITHOUT the heavy embedding vector — for the review UI's crop/thumbnail lookups.
         The embedding (~512 floats/row) is only needed by L4 matching, not the dashboard, and transferring

@@ -55,6 +55,65 @@ def sim(a, b) -> float:
 # --- OSNet person-ReID (boxmot): person-focused + view-invariant, fine-tunable on site data ---
 _osnet = None
 
+# A promoted contrastive fine-tune (training/finetune_triplet.py) is signalled by a sentinel file
+# holding the absolute weights path. When present, EVERY embedder in every process (dashboard,
+# re-embed, future-day stack) loads that model instead of stock boxmot, so the cache + gallery +
+# live processing all share ONE embedding space. Remove the sentinel to fall back to stock OSNet.
+import os
+from pathlib import Path
+
+_ACTIVE_WEIGHTS_FILE = Path(__file__).resolve().parents[1] / "outputs" / "reid_active_weights.txt"
+_triplet = None        # (model, dev) for a promoted contrastive osnet, cached
+_triplet_path = None   # which weights file the cached _triplet was built from
+
+
+def _active_triplet_weights():
+    """Path of the promoted contrastive OSNet weights, or None for stock boxmot."""
+    try:
+        if _ACTIVE_WEIGHTS_FILE.exists():
+            p = _ACTIVE_WEIGHTS_FILE.read_text(encoding="utf-8").strip()
+            if p and Path(p).exists():
+                return p
+    except Exception:
+        pass
+    return None
+
+
+def _load_triplet(weights):
+    global _triplet, _triplet_path
+    if _triplet is None or _triplet_path != weights:
+        import torch
+        from boxmot.reid.backbones.osnet import osnet_x1_0
+        dev = "cuda" if torch.cuda.is_available() else "cpu"
+        m = osnet_x1_0(num_classes=0, pretrained=False, loss="triplet")
+        ckpt = torch.load(weights, map_location=dev, weights_only=False)  # our own trusted checkpoint
+        sd = ckpt.get("state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
+        m.load_state_dict(sd, strict=False)
+        _triplet = (m.eval().to(dev), dev)
+        _triplet_path = weights
+    return _triplet
+
+
+def _triplet_embed(crop, weights):
+    """Embed with the promoted contrastive model. Preprocessing MUST match
+    training/finetune_triplet.py:_load_image so the cache stays in one space."""
+    import torch
+    m, dev = _load_triplet(weights)
+    im = cv2.cvtColor(cv2.resize(crop, (128, 256)), cv2.COLOR_BGR2RGB).astype("float32") / 255.0
+    im = (im - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]
+    x = torch.tensor(im.astype("float32")).permute(2, 0, 1).unsqueeze(0).to(dev)
+    with torch.no_grad():
+        o = m(x)
+        o = o[-1] if isinstance(o, (tuple, list)) else o   # triplet head returns a tensor in eval
+        f = (o / (o.norm(dim=1, keepdim=True) + 1e-9)).cpu().numpy().ravel()
+    return f.astype("float32")
+
+
+def reset_osnet():
+    """Drop cached models so the next embed reloads with the currently-active weights."""
+    global _osnet, _triplet, _triplet_path
+    _osnet = _triplet = _triplet_path = None
+
 
 def _load_osnet(weights="osnet_x1_0_msmt17.pt"):
     global _osnet
@@ -69,9 +128,12 @@ def _load_osnet(weights="osnet_x1_0_msmt17.pt"):
 def osnet_embed(crop):
     if crop is None or getattr(crop, "size", 0) == 0:
         return None
+    w = _active_triplet_weights()
+    if w:                                  # promoted contrastive model is active
+        return _triplet_embed(crop, w)
     reid = _load_osnet()
-    h, w = crop.shape[:2]
-    feats = reid(crop, boxes=np.array([[0, 0, w, h]], dtype=float))
+    h, w2 = crop.shape[:2]
+    feats = reid(crop, boxes=np.array([[0, 0, w2, h]], dtype=float))
     v = np.asarray(feats, dtype="float32").ravel()
     return v / (np.linalg.norm(v) + 1e-9)
 

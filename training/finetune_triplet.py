@@ -39,15 +39,23 @@ def _write(job: Path | None, **kw) -> None:
     job.write_text(json.dumps(cur, indent=2), encoding="utf-8")
 
 
+_IMG_CACHE: dict = {}             # decode+preprocess each crop ONCE, reuse across all epochs (training is I/O-bound, ~700 crops × N epochs)
+
+
 def _load_image(path: str, size=(128, 256)):
+    key = (str(path), size)
+    if key in _IMG_CACHE:
+        return _IMG_CACHE[key]
     import cv2
-    import numpy as np
     im = cv2.imread(str(path))
     if im is None:
+        _IMG_CACHE[key] = None
         return None
     im = cv2.cvtColor(cv2.resize(im, size), cv2.COLOR_BGR2RGB).astype("float32") / 255.0
     im = (im - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]
-    return im
+    out = im.astype("float32")    # the list arithmetic above promotes to float64; the model is float32
+    _IMG_CACHE[key] = out
+    return out
 
 
 def _embed_batch(model, paths, dev, size=(128, 256)):
@@ -202,8 +210,11 @@ def main() -> None:
             w  = torch.tensor(weights, dtype=torch.float32).to(dev)
 
             opt.zero_grad()
-            fa = model(xa); fa = fa / (fa.norm(dim=1, keepdim=True) + 1e-9)
-            fb = model(xb); fb = fb / (fb.norm(dim=1, keepdim=True) + 1e-9)
+            def _feat(o):                              # OSNet(loss='triplet') returns (logits, features) in train mode, a tensor in eval
+                o = o[-1] if isinstance(o, (tuple, list)) else o
+                return o / (o.norm(dim=1, keepdim=True) + 1e-9)
+            fa = _feat(model(xa))
+            fb = _feat(model(xb))
 
             # Contrastive loss: same -> minimize distance; different -> push beyond margin
             dist = 1.0 - (fa * fb).sum(dim=1)        # cosine distance in [0, 2]
