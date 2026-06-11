@@ -772,7 +772,35 @@ async function loadLogs(){     // 📈 Logs tab: every training run + the impact
     const head=`<div class="loghead"><b>v${v.version}</b>${v.active?' <span class="pidbadge cust">✓ active</span>':''} · ${v.kind} · <span class="hint">${v.created||''} · ${v.trained_on||0} labels</span><br><span class="hint">${v.notes||''}</span></div>`;
     return `<div class="logcard">${head}${im?impactHTML(Object.assign({},im,{version:v.version,created:v.created})):''}</div>`;
   }).join('');
-  $('#logs').innerHTML=`<div class="rephead"><div class="rtitle">📈 Training log <span class="hint">— every training run + the impact it created · review your markings in the 🪪 ReID tab</span></div></div>${cards||'<p class="empty">no training runs yet — train in the 🪪 ReID tab</p>'}`;
+  $('#logs').innerHTML=`<div class="rephead"><div class="rtitle">📈 Training log <span class="hint">— every training run + the impact it created · review your markings in the 🪪 ReID tab</span></div></div>
+    <div id="accCard"><p class="hint">📊 measuring day accuracy + separation…</p></div>${cards||'<p class="empty">no training runs yet — train in the 🪪 ReID tab</p>'}`;
+  loadAccCard((WIN||'').split('_')[0]||'');   // lazy — the /accuracy call is heavy
+}
+async function loadAccCard(date){     // 📊 Day accuracy & effort card (Phase 2) at the top of the Logs tab
+  const el=document.getElementById('accCard'); if(!el||!date) return;
+  const a=window._ACC && window._ACC.date===date ? window._ACC : await fetch('/api/hitl/accuracy/'+date).then(r=>r.json()).catch(()=>null);
+  const el2=document.getElementById('accCard'); if(!el2) return;
+  if(!a){ el2.innerHTML=''; return; }
+  window._ACC=a;
+  const sep=a.separation||{}, eff=a.effort||{}, tr=sep.trend||[];
+  // tiny inline separation sparkline (SVG)
+  let spark='';
+  if(tr.length>=2){
+    const vs=tr.map(p=>p.separation), mn=Math.min(...vs), mx=Math.max(...vs), rng=(mx-mn)||1, W=160, H=28;
+    const pts=vs.map((v,i)=>`${(i/(vs.length-1)*W).toFixed(1)},${(H-((v-mn)/rng)*H).toFixed(1)}`).join(' ');
+    const safe=H-((0.15-mn)/rng)*H;
+    spark=`<svg width="${W}" height="${H}" style="vertical-align:middle">${(0.15>=mn&&0.15<=mx)?`<line x1="0" y1="${safe.toFixed(1)}" x2="${W}" y2="${safe.toFixed(1)}" stroke="var(--ok)" stroke-dasharray="3 3" opacity=".5"/>`:''}<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.5"/></svg>`;
+  }
+  const accBig = a.est_accuracy!=null ? `${Math.round(a.est_accuracy*100)}%` : '—';
+  const accSub = a.est_accuracy!=null ? `auto ${(a.accuracy||{}).auto_customers} → final ${(a.accuracy||{}).final_customers} customers` : 'needs a baseline day (auto-captured on the next fresh day)';
+  el2.innerHTML=`<div class="logcard"><div class="loghead"><b>📊 Day accuracy &amp; effort</b> <span class="hint">— ${a.date}</span></div>
+    <div class="impactgrid">
+      <div><b>${accBig}</b><br><span class="hint">auto-accuracy<br>${accSub}</span></div>
+      <div><b>${sep.current??'—'} ${accSepArrow(tr)}</b><br><span class="hint">same/diff separation<br>${spark}</span></div>
+      <div><b>${(sep.same_avg??'—')} vs ${(sep.diff_avg??'—')}</b><br><span class="hint">same vs different sim</span></div>
+      <div><b>${eff.decisions||0}</b><br><span class="hint">human decisions made</span></div>
+    </div>
+    <p class="hint" style="margin-top:4px">📈 ${a.verdict||''} <span class="hint">— separation crossing ~0.15 (dashed line) is when auto-merge becomes viable.</span></p></div>`;
 }
 async function markingUndo(i){
   const p=(window._MARKINGS||[])[i]; if(!p||RO) return;
@@ -973,7 +1001,7 @@ async function loadReidCands(){
   box.innerHTML=`<div class="handoffbox">
     <details class="reidsec" open>
       <summary><b>🎓 Mark &amp; Train</b> <span class="hint reidstatusfull">${reidStatusFull()}</span></summary>
-      <div class="reidsecbody">${trainBtn}<div id="reidimpact"></div>${galLine}${modelBtns}
+      <div class="reidsecbody">${trainBtn}<div id="reidimpact"></div>${galLine}<div id="reidaccline"><span class="hint">🎯 measuring accuracy + separation…</span></div>${modelBtns}
         <p class="hint" style="margin-top:6px">all ReID training lives here: <b>Train on my answers</b> = quick threshold calibration · <b>Contrastive fine-tune</b> = deep backbone retrain on your pairs · <b>Rebuild gallery</b> = refresh staff reference embeddings.</p>
       </div>
     </details>
@@ -987,6 +1015,20 @@ async function loadReidCands(){
     </details>
   </div>`;
   if(REID_LAST_IMPACT){ const im=document.getElementById('reidimpact'); if(im) im.innerHTML=impactHTML(REID_LAST_IMPACT); }   // survive trainer rebuild
+  loadAccuracyLine(date);   // §1 trust line — lazy (the /accuracy call is heavy) so the tab stays snappy
+}
+function accSepArrow(tr){ if(!tr||tr.length<2) return ''; const a=tr[0].separation, b=tr[tr.length-1].separation; return b>a?'<span style="color:var(--ok)">↑</span>':b<a?'<span style="color:var(--no)">↓</span>':'→'; }
+async function loadAccuracyLine(date){     // 🎯 the per-day trust instrument in §1 Mark & Train (Phase 2)
+  const el=document.getElementById('reidaccline'); if(!el||!date) return;
+  const a=await fetch('/api/hitl/accuracy/'+date).then(r=>r.json()).catch(()=>null);
+  const el2=document.getElementById('reidaccline'); if(!el2) return;
+  if(!a){ el2.innerHTML=''; return; }
+  window._ACC=a;                                          // cache for the Logs card
+  const sep=a.separation||{}; const eff=a.effort||{};
+  const accTxt = a.est_accuracy!=null
+    ? `auto-accuracy <b>${Math.round(a.est_accuracy*100)}%</b> <span class="hint">(auto ${(a.accuracy||{}).auto_customers} → final ${(a.accuracy||{}).final_customers} cust)</span> · `
+    : `<span class="hint">accuracy: needs a baseline day (auto-captured on the next fresh day) · </span>`;
+  el2.innerHTML=`<div class="hint" style="margin:4px 0">🎯 ${accTxt}separation <b>${sep.current??'—'}</b> ${accSepArrow(sep.trend)} <span class="hint">(same ${sep.same_avg??'—'} vs diff ${sep.diff_avg??'—'})</span> · <b>${eff.decisions||0}</b> decisions made<br><span class="hint">${a.verdict||''}</span></div>`;
 }
 async function loadReidMarkings(force){   // Section 3: every ✓/✗ you've marked (belt + E2 drawers + cross-cam) — cross-check + undo, then train
   const box=document.getElementById('reidmarkings'); if(!box) return;

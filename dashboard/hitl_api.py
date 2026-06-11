@@ -2109,6 +2109,68 @@ def review_queue(date: str) -> dict:
     return {"items": rendered, "counts": counts, "date": date}
 
 
+def _auto_baseline(date: str):
+    """The pipeline's PRE-human report, snapshotted ONCE at initial processing (outputs/<date>_auto_baseline.json,
+    written by the day-runner, never clobbered by _rerun_l4). None for days processed before this feature -> the
+    metric falls back to the override-based estimate. This is the only honest auto baseline: visits.json itself is
+    NOT one (it's regenerated with the human-enrolled gallery + must_link on every _rerun_l4)."""
+    try:
+        return json.loads((OUTPUTS / f"{date}_auto_baseline.json").read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+@router.get("/accuracy/{date}")
+def accuracy(date: str) -> dict:
+    """Per-day TRUST instrument (Phase 2): how accurate the auto pass was + how much HITL effort the day needed.
+    `separation` (the model's same/diff gap + its trend over trainings) is the leading indicator — when it crosses
+    ~0.15, auto-merge becomes safe. `effort` = corrections the human made. If an auto baseline was snapshotted at
+    processing, also the EXACT auto-vs-final headline. Kept light (no queue recompute) so the §1 line is snappy."""
+    if not date or "/" in date or "\\" in date or ".." in date:
+        raise HTTPException(400, "bad date")
+    import numpy as np
+    same, diff = _reid_labeled_pairs(date)
+    same_avg = round(float(np.mean(same)), 3) if same else None
+    diff_avg = round(float(np.mean(diff)), 3) if diff else None
+    sep = round(same_avg - diff_avg, 3) if (same_avg is not None and diff_avg is not None) else None
+    trend = []
+    for v in reversed(store.list_model_versions(40)):              # oldest -> newest separation points
+        im = (v.get("params") or {}).get("impact") or {}
+        if im.get("separation") is not None:
+            trend.append({"version": v.get("version"), "separation": im["separation"], "created": v.get("created")})
+    report = _day_report(date)
+    cust = report["customers"]["unique_customers"]
+    staff = report["employees"]["headcount"]
+    overrides = reid_status(date).get("total", 0)                  # corrections the human made (markings)
+    auto = _auto_baseline(date)
+    if auto is None and overrides == 0:                            # fresh day, no HITL yet -> THIS report IS the auto
+        try:                                                       # baseline; snapshot it once (never re-written after)
+            (OUTPUTS / f"{date}_auto_baseline.json").write_text(json.dumps(report), encoding="utf-8")
+            auto = report
+        except Exception:
+            pass
+    acc = None
+    if auto:                                                       # exact auto-vs-final headline (June-4-forward)
+        a_c = (auto.get("customers") or {}).get("unique_customers")
+        a_s = (auto.get("employees") or {}).get("headcount")
+        if a_c is not None:
+            d_c, d_s = abs(a_c - cust), abs((a_s or 0) - staff)
+            acc = {"auto_customers": a_c, "final_customers": cust, "auto_staff": a_s, "final_staff": staff,
+                   "pct": round(1 - (d_c + d_s) / max(1, a_c + (a_s or 0)), 3)}
+    auto_decisions = (acc["auto_customers"] + (acc["auto_staff"] or 0)) if acc else (cust + staff)
+    # est_accuracy is ONLY honest with an auto baseline (auto-vs-final). Without one, every marking is NOT an
+    # "error" — most ✗ 'different' verdicts CONFIRM the auto pass was right — so we don't fabricate a number.
+    est = acc["pct"] if acc else None
+    verdict = ("separation crossing the safe band (~0.15) — auto-merge is becoming viable; verify on a baseline day before enabling"
+               if (sep or 0) >= 0.15
+               else "same & different still overlap — keep clearing the queue + fine-tune before any auto-merge")
+    return {"date": date,
+            "separation": {"current": sep, "same_avg": same_avg, "diff_avg": diff_avg, "trend": trend},
+            "effort": {"decisions": overrides, "auto_decisions": auto_decisions},   # decisions = the HITL work done
+            "accuracy": acc, "est_accuracy": est, "report": {"customers": cust, "staff": staff},
+            "verdict": verdict, "has_baseline": auto is not None}
+
+
 _INT_CROP_CACHE: dict = {}
 
 
