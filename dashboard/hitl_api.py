@@ -696,6 +696,29 @@ def _exit_confirmed(date: str) -> set:
     return out
 
 
+def _xdir_marks(window: str) -> dict:
+    """track -> 'exit' | 'entered' from durable direction re-confirmations (latest-wins; reset undoes).
+    Written by /xdir-decision when geometry says a human-tagged 'customer' track only EXITED:
+      xdirok-<trk>  confirm -> 'exit'    (yes, it was an exit — stays visible, never counted)
+      forcein-<trk> confirm -> 'entered' (no, they entered — count it again)"""
+    out: dict = {}
+    for l in _window_labels(window):
+        vid = str(l.get("visit_id", ""))
+        for pref, val in (("xdirok-", "exit"), ("forcein-", "entered")):
+            if vid.startswith(pref):
+                try:
+                    tk = int(vid[len(pref):])
+                except ValueError:
+                    break
+                if l.get("verdict") == "reset":
+                    if out.get(tk) == val:
+                        out.pop(tk, None)
+                else:
+                    out[tk] = val
+                break
+    return out
+
+
 def _frozen_contexts(date: str) -> dict:
     """Frozen #C/#G per canonical entry from a published-day person_contexts snapshot (empty if the day
     isn't published or the table isn't migrated yet). Lets _daily_tags lock the numbering after publish."""
@@ -828,9 +851,12 @@ def _classify_detections(window: str, with_dims: bool = True, tags: dict | None 
         accounted.add(("C05", e["track"]))
         if camtrack(e.get("crop")):
             accounted.add(camtrack(e.get("crop")))
+    ann = {(a["camera"], a["track"]): a for a in _window_annotations(window)}  # human allocations (hoisted: humans beat machines below)
     weak_staff = set()                                          # gallery hit in the SUGGEST band -> stays a customer, flagged
     for st in vj.get("staff", []):
         ct = camtrack(st.get("crop"))
+        if (ann.get(("C05", st["track"])) or {}).get("category") == "customer":
+            continue                                            # human said CUSTOMER -> the machine staff match is released entirely
         if st.get("weak"):                                      # NOT accounted/staff_emp -> remains a customer to confirm
             weak_staff.add(("C05", st["track"]))
             if ct:
@@ -883,13 +909,19 @@ def _classify_detections(window: str, with_dims: bool = True, tags: dict | None 
                 continue
             accounted.discard((cam_, bt)); cust_entry.pop((cam_, bt), None); staff_emp.pop((cam_, bt), None)  # mis-association -> back to 'inside'
 
-    ann = {(a["camera"], a["track"]): a for a in _window_annotations(window)}  # human allocations (day-wide batch)
     for (cam, tk), a in ann.items():                           # camera-aware staff: an annotated staffer (ANY camera, incl. interior C11/C14)
         if a.get("category") == "staff" and a.get("employee_id") and tk not in not_staff:   # with an id -> resolve to #S, not 'S?'
             accounted.add((cam, tk))
             staff_emp[(cam, tk)] = a["employee_id"]
     parked = _parked_set(window)                                                    # held for later review
-    l2set = {x["track"] for x in _l2_crossings(window)}                             # raw L2 door-IN crossings -> 🚪 marker on the det card
+    dmap = _l2_dirs(window)                                     # raw L2 crossings per track {'in': ist, 'out': ist} -> dir chips + the compulsory rule
+    xrev = {}                                                   # (out_window, out_track) -> the matched ENTRY (an exit inherits its person's #C)
+    try:
+        for ekey, ex in _exit_resolve(window.split("_")[0]).items():
+            if ex.get("source") == "matched" and ex.get("out_window") and ex.get("out_track") is not None:
+                xrev[(ex["out_window"], ex["out_track"])] = ekey
+    except Exception:
+        pass
     dirs = [(wcfg.get("l1"), "C05")] + [(d, Path(d).name.replace("L1_", "")) for d in wcfg.get("interior", [])]
     out = []
     for d, cam in dirs:
@@ -928,6 +960,16 @@ def _classify_detections(window: str, with_dims: bool = True, tags: dict | None 
                     pid = f"C{n}"
                     g = tags["grp"].get((window, ent))
                     group = f"G{g}" if g else None
+            exit_of = None
+            if pid is None and cam == "C05":                   # a matched EXIT inherits its person's #C (check-out crop, same identity)
+                ekey = xrev.get((window, t["track"]))
+                if ekey:
+                    n = tags["cust"].get(tuple(ekey))
+                    if n:
+                        pid = f"C{n}"
+                        g = tags["grp"].get(tuple(ekey))
+                        group = f"G{g}" if g else None
+                        exit_of = list(ekey)
             # --- determination DERIVES from the pid (+ park + explicit non-customer call) so buckets == E2 ---
             if entparked:
                 sugg, conf, det = "on_hold", ann_cat is not None, "on_hold"
@@ -958,13 +1000,23 @@ def _classify_detections(window: str, with_dims: bool = True, tags: dict | None 
                     sugg = "customer" if (pid and pid[0] == "C") else "to_review"   # authoritative) -> customer; the
                 conf = ann_cat is not None                        # rest (loiter/OUT-only) stay the human's enter/pass queue
                 det = ann_cat if conf else sugg
+            xdirs = dmap.get(t["track"]) if cam == "C05" else None
+            l2_dir = (("both" if (xdirs.get("in") and xdirs.get("out")) else ("in" if xdirs.get("in") else "out"))
+                      if xdirs else None)
+            # COMPULSORY RULE: a door-line crossing may NEVER vanish into the undecided piles — it lands
+            # customer (or staff via the pid path above). Human holds (parked) + explicit human releases
+            # (passby/not_person/duplicate annotations) are honored; everything else -> customer bucket.
+            if xdirs and not entparked and det in ("to_review", "inside", "on_hold"):
+                sugg = det = "customer"
             out.append({"camera": cam, "track": t["track"], "window": window, "ist": t.get("first_ist"), "dur_s": dur,
                         "crop": cropr, "crop_w": cw, "crop_h": ch,
                         "disposition": disp, "staff": key in staff_emp, "annotation": ann_cat,
                         "parked": key in parked, "suggested": sugg, "confirmed": conf,
                         "determination": det, "employee_id": staff_emp.get(key),
                         "pid": pid, "group": group, "weak_staff": key in weak_staff,
-                        "l2_in": (cam == "C05" and t["track"] in l2set),   # 🚪 this det is one of the raw L2 door-IN crossings
+                        "l2_in": bool(xdirs and xdirs.get("in")),          # 🚪 raw L2 door-line IN crossing
+                        "l2_out": bool(xdirs and xdirs.get("out")),        # 🚪 raw L2 door-line OUT crossing (exit)
+                        "l2_dir": l2_dir, "exit_of": exit_of,              # exit's owner entry (window, track) when matched
                         "demo": _demo_label(cropr)})   # age/gender estimate (None if no face)
     return out
 
@@ -996,7 +1048,7 @@ def _cards_from_dets(window: str) -> dict:
             dets = _classify_detections(w, with_dims=False)
         except Exception:
             continue
-        l2set = {x["track"] for x in _l2_crossings(w)}     # raw IN crossings = the door-entry candidate pool for THIS window
+        l2set = {x["track"] for x in _l2_crossings(w) if x.get("dir") == "in"}   # raw IN crossings = the door-entry candidate pool for THIS window
         for d in dets:
             pid, det = d.get("pid"), d.get("determination")
             sight = {"crop": d.get("crop"), "camera": d["camera"], "ist": d.get("ist"),
@@ -2147,6 +2199,43 @@ def _review_items(date: str) -> list:
                                      "body": {"window": win, "camera": d.get("camera"), "track": d.get("track"),
                                               "crop": d.get("crop")},
                                      "categories": ["customer", "staff", "passby", "not_person"]}})
+        xmarks = _xdir_marks(win)
+        for d in dets:                                              # 6) DIRECTION CONFLICT: human said 'customer', geometry says exit-only
+            if (d.get("camera") == "C05" and d.get("annotation") == "customer"
+                    and d.get("l2_dir") == "out" and d.get("track") not in xmarks):
+                items.append({"type": "xdir", "score": 0.6,
+                              "crops": [d.get("crop")], "sim": None,
+                              "left": f"{d.get('pid') or '?'} · →🚪 {d.get('ist') or ''}",
+                              "right": "geometry: EXIT-only crossing",
+                              "impact": "tagged customer, but only crossed OUT — entry or exit?",
+                              "action": {"url": "/api/hitl/xdir-decision", "verb": "POST", "kind": "samediff",
+                                         "body": {"window": win, "track": d.get("track")}}})
+        try:                                                        # 7) CONSISTENCY AUDIT (defensive — should stay empty)
+            ins = {x["track"] for x in _l2_crossings(win) if x.get("dir") == "in"}
+            vj_full = json.loads((OUTPUTS / win / "visits.json").read_text(encoding="utf-8"))
+            for v in vj_full.get("visits", []) + [{"in_track": o.get("track")} for o in vj_full.get("open_sessions", [])]:
+                t = v.get("in_track")
+                if t is not None and t not in ins:
+                    items.append({"type": "audit", "score": 0.95, "crops": [], "sim": None,
+                                  "left": f"{win} trk {t}", "right": "pipeline entry not in geometry replay",
+                                  "impact": "L4 counted an entry the L2 replay can't see — check config/traj drift",
+                                  "action": None})
+            for d in dets:
+                if (d.get("camera") == "C05" and d.get("l2_dir")
+                        and d.get("determination") not in ("customer", "staff")
+                        and d.get("annotation") not in ("passby", "not_person", "duplicate")
+                        and not d.get("parked")):
+                    items.append({"type": "audit", "score": 0.95, "crops": [d.get("crop")], "sim": None,
+                                  "left": f"{win} trk {d.get('track')}", "right": f"crossing landed in '{d.get('determination')}'",
+                                  "impact": "a door crossing escaped the staff/customer guarantee",
+                                  "action": None})
+                if d.get("annotation") == "customer" and d.get("determination") == "staff":
+                    items.append({"type": "audit", "score": 0.9, "crops": [d.get("crop")], "sim": None,
+                                  "left": f"{win} trk {d.get('track')}", "right": "human 'customer' vs human staff LABEL",
+                                  "impact": "two human calls disagree — resolve in All-Detections",
+                                  "action": None})
+        except Exception:
+            pass
     try:                                                            # 5) WRONG CHECK-OUT? uncertain L4 exit matches -> human verifies
         ap = (store.active_model() or {}).get("params", {}) or {}
         efloor = float(ap.get("reid_exit_floor", 0.55))
@@ -2469,6 +2558,8 @@ def _alloc_one(window, camera, track, category, crop, emp_id, duplicate_of=None)
             store.add_label(window, f"false-{track}", "false_detection", in_track=track, reason=category)
         elif category == "customer":
             store.add_label(window, f"false-{track}", "reset", in_track=track)
+            store.add_label(window, f"notstaff-{track}", "reject", in_track=track,
+                            reason="human: customer")          # durable: a /recompute can't re-staff this person
         return True
     return False
 
@@ -2546,6 +2637,29 @@ def confirm_exit(body: dict) -> dict:
         raise HTTPException(400, "confirm-exit needs a track")
     store.add_label(window, f"exitok-{track}", "confirm", in_track=track, reason="exit_confirmed")
     return {"ok": True}
+
+
+@router.post("/xdir-decision")
+def xdir_decision(body: dict) -> dict:
+    """Direction re-confirmation for a human-tagged 'customer' track that geometry says only EXITED
+    (the inverted-sign legacy). same=True -> 'yes, it was an exit' (xdirok-, stays visible + uncounted);
+    same=False -> 'no, they entered' (forcein-, _confirmed_entries counts it again). Durable labels;
+    revoke=True resets the standing mark so the queue item returns."""
+    _guard_write()
+    window = body.get("window", "")
+    _window_dir(window)
+    track = body.get("track")
+    if track is None:
+        raise HTTPException(400, "xdir-decision needs a track")
+    if body.get("revoke"):
+        store.add_label(window, f"xdirok-{track}", "reset", in_track=track)
+        store.add_label(window, f"forcein-{track}", "reset", in_track=track)
+        return {"ok": True, "stale": True}
+    if body.get("same") is True:                                # yes — it really was an exit
+        store.add_label(window, f"xdirok-{track}", "confirm", in_track=track, reason="human: exit confirmed")
+    else:                                                       # no — they entered; count them
+        store.add_label(window, f"forcein-{track}", "confirm", in_track=track, reason="human: entered")
+    return {"ok": True, "stale": True}
 
 
 @router.post("/recompute")
@@ -2692,14 +2806,16 @@ _L2_XING: dict = {}        # window -> [{track, ist}] raw IN crossings (L1 + zon
 
 
 def _l2_crossings(window: str) -> list:
-    """Raw L2 door-line IN crossings for a window — the SAME geometry ingest's L2 uses (entry_line +
-    street_mask), but WITHOUT the time-window dedup, so every genuine door entry shows (broad, L2-
-    authoritative coverage; the user accepts more false positives over missed entries). Returns
-    [{track, ist}] for C05 L1 tracks whose path crosses the entry line onto the inside; street-mask
-    noise is dropped (same filter as _classify_detections, so a street track never becomes a customer)."""
+    """Raw L2 door-line crossings for a window, BOTH directions — the SAME geometry the pipeline's L2/L4
+    use (vision.geometry imported directly so the two layers can never disagree on which side is 'inside'
+    again — the old local copy inverted the sign and counted exits as entries). No time-window dedup:
+    every genuine crossing shows (L2-authoritative; the user accepts false positives over missed people).
+    Returns [{track, ist, dir:'in'|'out'}] — at most one event per direction per C05 track; street-mask
+    noise dropped (same filter as _classify_detections, so a street track never becomes a customer)."""
     hit = _L2_XING.get(window)
     if hit is not None:
         return hit
+    from vision.geometry import inside_sign_from_label, segments_intersect, side
     try:
         wcfg = json.loads((OUTPUTS / window / "window.json").read_text(encoding="utf-8"))
         cfg = json.loads(Path(wcfg["config"]).read_text(encoding="utf-8"))
@@ -2710,17 +2826,14 @@ def _l2_crossings(window: str) -> list:
     p1, p2 = tuple(cfg["entry_line"][0]), tuple(cfg["entry_line"][1])
     street, sfrac = cfg.get("street_mask", []), cfg.get("street_drop_frac", 0.5)
     min_h = cfg.get("min_bbox_h", 0.0)
-    inside_sign = -1 if cfg.get("inside") == "right" else 1     # 'right' of the line = the store side = IN
+    inside_sign = inside_sign_from_label(cfg.get("inside", "right"))   # same default as stack/l4_visits
 
-    def side(a, b, pt):
-        d = (b[0] - a[0]) * (pt[1] - a[1]) - (b[1] - a[1]) * (pt[0] - a[0])
-        return 1 if d > 0 else (-1 if d < 0 else 0)
-
-    def ccw(A, B, C):
-        return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (C[0] - A[0])
-
-    def seg_int(A, B, C, D):
-        return ccw(A, C, D) != ccw(B, C, D) and ccw(A, B, C) != ccw(A, B, D)
+    def secs(t):
+        try:
+            h, m, s = map(int, str(t).split(":"))
+            return h * 3600 + m * 60 + s
+        except Exception:
+            return None
 
     out = []
     for t in tracks:
@@ -2731,18 +2844,37 @@ def _l2_crossings(window: str) -> list:
             continue                                            # mostly through-glass street -> noise
         if min_h > 0 and max((p[3] for p in traj), default=0.0) < min_h:
             continue
+        got = {}
         prev = prev_sign = None
         for ts, x, y, h in traj:
             cur = side(p1, p2, (x, y))
             if (prev is not None and prev_sign not in (None, 0) and cur != 0
-                    and cur != prev_sign and seg_int(prev, (x, y), p1, p2)):
-                if cur == inside_sign:                          # crossed onto the inside -> an IN entry
-                    out.append({"track": t["track"], "ist": t.get("first_ist")})
-                break
+                    and cur != prev_sign and segments_intersect(prev, (x, y), p1, p2)):
+                d = "in" if cur == inside_sign else "out"
+                if d not in got:
+                    if d == "in":
+                        ist = t.get("first_ist")               # report ordering keys off first_ist — keep exact
+                    else:                                       # OUT ist = first_ist + offset to the crossing (display-only)
+                        base = secs(t.get("first_ist"))
+                        ist = (_ist_from_secs(base + max(0.0, ts - t.get("first_ts", ts)))
+                               if base is not None else t.get("first_ist"))
+                    got[d] = True
+                    out.append({"track": t["track"], "ist": ist, "dir": d})
+                if len(got) == 2:
+                    break
             if cur != 0:
                 prev_sign = cur
             prev = (x, y)
     _L2_XING[window] = out
+    return out
+
+
+def _l2_dirs(window: str) -> dict:
+    """track -> {'in': ist|None, 'out': ist|None} over the raw crossings — the per-track direction map
+    the compulsory-bucket rule + dir chips key off."""
+    out: dict = {}
+    for x in _l2_crossings(window):
+        out.setdefault(x["track"], {"in": None, "out": None})[x["dir"]] = x.get("ist")
     return out
 
 
@@ -2768,19 +2900,26 @@ def _confirmed_entries(window):
     labels = _window_labels(window)                                           # staff door crossings AREN'T customers -> mirror _classify_detections' staff set exactly:
     not_staff = {l["in_track"] for l in labels if str(l.get("visit_id", "")).startswith("notstaff-")
                  and l.get("verdict") == "reject" and l.get("in_track") is not None}
-    staff_tr = {st["track"] for st in data.get("staff", []) if not st.get("weak")}      # (a) gallery auto-recognised (non-weak)
-    staff_tr |= {l["in_track"] for l in labels if l.get("verdict") == "employee"        # (b) label-assigned #S
+    staff_tr = {st["track"] for st in data.get("staff", []) if not st.get("weak")       # (a) gallery auto-recognised (non-weak)
+                and ann.get(st["track"]) != "customer"}                                  #     ...unless a human said 'customer' — human beats MACHINE
+    staff_tr |= {l["in_track"] for l in labels if l.get("verdict") == "employee"        # (b) label-assigned #S (an explicit human staff call still wins)
                  and l.get("in_track") is not None and l["in_track"] not in not_staff}  # (annotated category='staff' is already dropped via _RESOLVED_NOT_CUSTOMER)
+    dmap = _l2_dirs(window)                                                              # geometry truth per track
+    xmarks = _xdir_marks(window)                                                         # human direction re-confirmations
+    out_only = {t for t, d in dmap.items() if d.get("out") and not d.get("in")}          # crossed OUT, never IN -> an exit, not footfall
     entries = [{"window": window, "track": t, "ist": ist} for t, ist in auto.items()
                if ann.get(t) not in _RESOLVED_NOT_CUSTOMER and ("C05", t) not in parked and t not in staff_tr]
     entries += [{"window": window, "track": t, "ist": det_ist[t]} for t in extra
-                if det_ist.get(t) and ("C05", t) not in parked and t not in staff_tr]
+                if det_ist.get(t) and ("C05", t) not in parked and t not in staff_tr
+                and (t not in out_only or xmarks.get(t) == "entered")]                   # ann-customer on an exit-only crossing isn't an ENTRY (xdir queue re-confirms)
     # L2-authoritative footfall: every RAW door-line IN crossing is a customer entry, unless it's already a
     # matched visit (auto) / that visit's exit, staff, parked, or a human said "not a customer". The smart
     # trajectory-handoff de-dup in _handoff_merges still collapses one person split across two door tracks.
     seen_tr = {e["track"] for e in entries} | out_tracks
     for x in _l2_crossings(window):
         t = x["track"]
+        if x.get("dir") != "in":                                                          # exits are visible in buckets, never counted
+            continue
         if (t in seen_tr or t in auto or t in staff_tr or ("C05", t) in parked
                 or ann.get(t) in _RESOLVED_NOT_CUSTOMER):
             continue

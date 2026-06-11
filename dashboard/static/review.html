@@ -294,6 +294,7 @@
   .srctag { font-size:10px; opacity:.85; cursor:help; }
   .srctag.human { filter:saturate(1.2); }
   .l2badge { font-size:11px; cursor:help; margin-left:3px; vertical-align:middle; }
+  .l2badge.l2out { color:#b45309; background:#fef3c7; border-radius:6px; padding:0 4px; font-weight:600; }
   .mcell.weak { border:1px dashed var(--warn); }
   .divider { border:none; border-top:1px solid var(--line); margin:34px 0 4px; }
 </style>
@@ -824,16 +825,17 @@ async function markingUndo(i){
 // --- 🎯 Review Queue: ONE ranked list of every uncertain call (live view over the same store the ReID belt / All-Detections use) ---
 const QUEUE_PAGE = 12;                 // visible at a time — conveyor belt (reuses the ReID-belt pattern)
 let QUEUE_ITEMS = [], QUEUE_WAIT = []; // QUEUE_WAIT = indices not yet shown
-const QTYPE = {reid:'👥 returning?', xcam:'🎥 cross-cam', weak_staff:'👤 staff?', review_det:'❓ categorise', visit_exit:'🚪 check-out?'};
+const QTYPE = {reid:'👥 returning?', xcam:'🎥 cross-cam', weak_staff:'👤 staff?', review_det:'❓ categorise', visit_exit:'🚪 check-out?', xdir:'🚪 exit?', audit:'⚠ consistency'};
 function qThumb(c){ return (c&&!HIDE)?`<img src="${cropURL(c)}" onclick="event.stopPropagation();zoom('${c}')">`:'<div class="gthumb nocrop" style="width:52px;height:78px">👤</div>'; }
 function queueActBtns(i){
-  const it=QUEUE_ITEMS[i]||{}; const a=it.action||{};
+  const it=QUEUE_ITEMS[i]||{}; const a=it.action;
+  if(!a) return `<span class="hint" style="font-size:11px">check in All-Detections</span>`;   // audit items: informational
   if(a.kind==='category'){
     const lbl={customer:'🙋 customer',staff:'👤 staff',passby:'🚶 pass-by',not_person:'🚫 not person'};
     return (a.categories||[]).map(c=>`<button class="miniconfirm" onclick="queueDecide(${i},{category:'${c}'})" title="${c}">${lbl[c]||c}</button>`).join('');
   }
-  const yes=it.type==='weak_staff'?'✓ yes, staff':it.type==='visit_exit'?'✓ correct':'✓ same',
-        no=it.type==='weak_staff'?'✗ not them':it.type==='visit_exit'?'✗ wrong person':'✗ different';
+  const yes=it.type==='weak_staff'?'✓ yes, staff':it.type==='visit_exit'?'✓ correct':it.type==='xdir'?'✓ yes — exit (uncount)':'✓ same',
+        no=it.type==='weak_staff'?'✗ not them':it.type==='visit_exit'?'✗ wrong person':it.type==='xdir'?'↩ no — entered (count)':'✗ different';
   return `<button class="ok" onclick="queueDecide(${i},{same:true})">${yes}</button><button onclick="queueDecide(${i},{same:false})">${no}</button>`;
 }
 function queueItemHTML(i){
@@ -1291,7 +1293,9 @@ function detCard(d){
   else if (OUTCOMES.includes(det)) head = RO ? `<div class="dtag sugg">${(det==='staff'&&d.staff_name)?d.staff_name+'?':'suggested'}</div>` : `${nameTag}<button class="confirmbtn" onclick="allocate('${d.window}','${d.camera}',${d.track},'${d.crop||''}','${det}')">✓ confirm</button>`;
   else if (det==='inside') head = RO ? `<div class="dtag sugg">already inside</div>` : `<button class="confirmbtn" title="already counted at the door" onclick="allocate('${d.window}','${d.camera}',${d.track},'${d.crop||''}','duplicate')">✓ already counted</button>`;
   const winb = (DAY && d.window) ? `<span class="winbadge">${(d.window.split('_')[1]||'').replace(/(\d\d)(\d\d)/,'$1:$2')}</span>` : '';   // which hour, in day view
-  const l2b = d.l2_in ? `<span class="l2badge" title="L2 door-line IN crossing — one of the 49 raw door entries">🚪</span>` : '';   // ties this det back to the L2 49
+  const l2b = d.l2_dir==='both' ? `<span class="l2badge" title="L2 door-line crossing: entered AND exited (quick visit / bounce)">🚪↔</span>`
+            : d.l2_dir==='out' ? `<span class="l2badge l2out" title="L2 door-line OUT crossing — this is an EXIT crop (visible, never adds to footfall)">→🚪 exit</span>`
+            : (d.l2_dir==='in' || d.l2_in) ? `<span class="l2badge" title="L2 door-line IN crossing — a raw door entry">🚪→</span>` : '';
   return `<div class="ev dcard ${d.confirmed?'resolved':''} ${isSel?'selected':''}" data-w="${d.window}" data-cam="${d.camera}" data-trk="${d.track}" data-crop="${d.crop||''}">${chk}${frameBtn}${cropImg(d.crop)}<div class="lb">${d.camera} ${d.ist||''} ${winb}${l2b}<br>#${d.track} · ${Math.round(d.dur_s||0)}s ${d.staff?'👤':''}${pidTag(d)}${d.demo?` <span class="demo">${d.demo}</span>`:''} <span class="cropdim" title="crop pixel size (w×h)">${(d.crop_w&&d.crop_h)?d.crop_w+'×'+d.crop_h+'px':''}</span></div>${head}${menu}</div>`;
 }
 function bucketArr(k){ return (DETALL||[]).filter(d=>d.determination===k && detKeep(d)).sort((a,b)=>(a.ist||'').localeCompare(b.ist||'')); }
@@ -1317,9 +1321,15 @@ function renderDets(){
   const grpB = (k) => {
     const m=BUCKET[k]||{icon:'',title:k,note:''}, arr=kept[k]||[], conf=arr.filter(d=>d.confirmed).length;
     const unconf=arr.filter(d=>!d.confirmed && !d.parked).length;
+    let note = m.note;
+    if (k==='customer' || k==='staff'){                       // L2 guarantee made visible: entries vs exit crops in the same group
+      const ex = arr.filter(d=>d.l2_dir==='out').length;
+      if (k==='customer') note = `${arr.length-ex} entered + counted${ex?` · +${ex} exit crops`:''}`;
+      else if (ex) note = `${m.note} · +${ex} exit crops`;
+    }
     const confAll = (!RO && (OUTCOMES.includes(k)||k==='inside') && unconf) ? `<button class="confallbtn" onclick="event.stopPropagation();confirmAllShown('${k}','${k==='inside'?'duplicate':k}')">✓ ${k==='inside'?'all already counted':'confirm all shown'} (${unconf})</button>` : '';
     const body = DOPEN.has(k) ? buildBucketCards(k) : '';   // lazy-render closed buckets; huge buckets render capped + lazy imgs (buildBucketCards)
-    return `<div class="dgrp ${DOPEN.has(k)?'open':''}"><div class="ddhead" onclick="toggleGrp('${k}',this)"><b>${m.icon} ${m.title} · ${conf}/${arr.length}</b> <span class="hint">${m.note}</span> ${confAll}</div><div class="dbody"><div class="mini">${body}</div></div></div>`;
+    return `<div class="dgrp ${DOPEN.has(k)?'open':''}"><div class="ddhead" onclick="toggleGrp('${k}',this)"><b>${m.icon} ${m.title} · ${conf}/${arr.length}</b> <span class="hint">${note}</span> ${confAll}</div><div class="dbody"><div class="mini">${body}</div></div></div>`;
   };
   const denom = (DETALL||[]).length;   // close covers EVERY detection incl. Inside — a missed customer can hide there
   const totalConf = (DETALL||[]).filter(d=>d.confirmed).length;
