@@ -1130,6 +1130,13 @@ def _cards_from_dets(window: str) -> dict:
         g["entry"] = list(ent) if ent else None
         if ent:
             ew, et = ent
+            # COVER = the actual door-crosser (entry track), never a tag-along track wrongly bundled into this
+            # visit. _best_crop alone picks the highest-RES crop, which on a bundled card can be a different
+            # person (e.g. a man at a display case shown on a woman's #C card). Constrain to the entry track.
+            _ecrops = [c for c in g["crops"] if c.get("window") == ew and c.get("track") == et]
+            if _ecrops:
+                g["best_crop"] = _best_crop(_ecrops)
+                g["demo"] = next((c.get("demo") for c in _ecrops if c.get("demo")), None) or g.get("demo")
             ci = cinfo.setdefault(ew, _entry_crop_info(ew)).get(et, {})
             rx = _exit_resolve(date).get((ew, et), {})         # L4: resolved exit (matched/presumed) when the visit had no OUT
             g["out_ist"] = ci.get("out_ist") or rx.get("out_ist")
@@ -1600,6 +1607,149 @@ def reid_candidates(date: str, threshold: float = 0.62) -> dict:
     out.sort(key=lambda x: -x["sim"])
     return {"candidates": out, "embedded_customers": len(reps), "total_customers": len(cards),
             "threshold": threshold}
+
+
+def _card_id(c):
+    """Stable id for a bucket card = its door entry (window,track), else its first crop's (window,track)."""
+    e = c.get("entry")
+    if e and e[0] is not None:
+        return [e[0], e[1]]
+    cr = (c.get("crops") or [{}])[0]
+    return [cr.get("window"), cr.get("track")]
+
+
+def _cluster_links_path(date: str) -> Path:
+    return OUTPUTS / f"cluster_links_{date}.json"
+
+
+def _load_cluster_links(date: str) -> dict:
+    """Human drag-drop decisions for the Cluster tab: {'merge':[[idA,idB],...], 'group':[...],
+    'move':{'<win>|<trk>':'staff'|'customer'}} where each id is [window,track]. Disk JSON (additive,
+    deletable) — survives reload, feeds the L3-master de-dup + cross-bucket reclassification."""
+    p = _cluster_links_path(date)
+    if p.exists():
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+            return {"merge": d.get("merge", []), "group": d.get("group", []), "move": d.get("move", {})}
+        except Exception:
+            pass
+    return {"merge": [], "group": [], "move": {}}
+
+
+@router.get("/reid/cluster/{date}")
+def reid_cluster(date: str, model: str = "active") -> dict:
+    """ReID-clustering PID prototype (L3-as-master). Returns ALL bucket cards in ONE flat list (each tagged
+    bucket:'customer'|'staff', with human 'move' overrides applied) + ONE combined cosine-similarity MATRIX
+    over all cards + the human merge/group decisions (as global card-index pairs). The client clusters each
+    bucket at a slider threshold (union-find over sim>=thr UNION forced merges) to collapse the L2-minted
+    #C/#S tags into UNIQUE persons, and can move a card across buckets using the SAME matrix (no refetch).
+    `model=c11` re-embeds with the C11-trained side cache (outputs/c11_model_emb_cache.pkl) for a before/after
+    without a live promotion. Read-only on model/counts; merge/group/move persist to cluster_links_<date>.json."""
+    if not date or "/" in date or "\\" in date or ".." in date:
+        raise HTTPException(400, "bad date")
+    import numpy as np
+    allc = _cards_from_dets(date)
+    links = _load_cluster_links(date)
+    moves = links.get("move", {})
+
+    if model in ("c11", "transreid"):
+        import pickle
+        # per-card reps on RE-EXTRACTED crops (the model's training domain). c11 = OSNet fine-tune
+        # (build_c11_card_reps); transreid = ViT-base fine-tune (build_transreid_card_reps).
+        fn = "transreid_card_reps.pkl" if model == "transreid" else "c11_card_reps.pkl"
+        p = OUTPUTS / fn
+        card_reps = pickle.load(open(p, "rb")) if p.exists() else {}
+
+        def rep(c):
+            cid = _card_id(c)
+            v = card_reps.get(f"{cid[0]}|{cid[1]}")
+            return np.asarray(v, dtype="float32") if v is not None else None
+    else:
+        cache = _load_emb_cache()
+
+        def rep(c):
+            vs = [np.asarray(cache[k], dtype="float32") for s in c.get("crops", [])
+                  for k in [str(s.get("crop") or "").replace("\\", "/")] if k in cache]
+            if not vs:
+                return None
+            m = np.mean(vs, axis=0); n = float(np.linalg.norm(m))
+            return (m / n) if n > 0 else None
+
+    reps = []                                              # (card, id, bucket, embedding)
+    for c, bucket in ([(c, "customer") for c in allc["customer_cards"]]
+                      + [(c, "staff") for c in allc["staff_cards"]]):
+        v = rep(c)
+        if v is None:
+            continue
+        cid = _card_id(c)
+        reps.append((c, cid, moves.get(f"{cid[0]}|{cid[1]}", bucket), v))
+    M = np.vstack([v for *_, v in reps]) if reps else np.zeros((0, 512), "float32")
+    sims = (M @ M.T) if reps else np.zeros((0, 0))
+    items = [{"id": cid, "pid": c["pid"], "crop": c.get("best_crop"), "n": len(c.get("crops", [])),
+              "in": c.get("in_ist") or c.get("first_ist"), "demo": c.get("demo"), "bucket": bk,
+              "moved": f"{cid[0]}|{cid[1]}" in moves}                 # human reclassified across buckets -> ✋ badge
+             for c, cid, bk, _ in reps]
+    pos = {f"{it['id'][0]}|{it['id'][1]}": i for i, it in enumerate(items)}
+
+    def idx_pairs(pairs):
+        out = []
+        for a, b in pairs:
+            ia = pos.get(f"{a[0]}|{a[1]}"); ib = pos.get(f"{b[0]}|{b[1]}")
+            if ia is not None and ib is not None and ia != ib:
+                out.append([ia, ib])
+        return out
+
+    return {"date": date, "model": model, "cards": items,
+            "sims": [[round(float(x), 3) for x in row] for row in sims],
+            "merges": idx_pairs(links["merge"]), "groups": idx_pairs(links["group"])}
+
+
+@router.post("/reid/cluster-link")
+def reid_cluster_link(body: dict) -> dict:
+    """Persist a human Cluster-tab decision. Body either:
+      {date, kind:'merge'|'group', a:[w,t], b:[w,t], remove?}   (pair: same-person / associated)
+      {date, kind:'move', a:[w,t], to:'staff'|'customer', remove?}   (reclassify a card across buckets)
+    Idempotent; order-free."""
+    date = body.get("date", "")
+    if not date or "/" in date or "\\" in date or ".." in date:
+        raise HTTPException(400, "bad date")
+    kind = body.get("kind")
+    if kind not in ("merge", "group", "move"):
+        raise HTTPException(400, "kind must be 'merge', 'group' or 'move'")
+    links = _load_cluster_links(date)
+    if kind == "move":
+        a, to = body.get("a"), body.get("to")
+        if not (a and len(a) == 2 and to in ("staff", "customer")):
+            raise HTTPException(400, "move needs a=[window,track], to='staff'|'customer'")
+        mv = links.setdefault("move", {})
+        key = f"{a[0]}|{a[1]}"
+        if body.get("remove"):
+            mv.pop(key, None)
+        else:
+            mv[key] = to
+    else:
+        a, b = body.get("a"), body.get("b")
+        if not (a and b and len(a) == 2 and len(b) == 2):
+            raise HTTPException(400, "need a,b as [window,track]")
+        pair, revp = [list(a), list(b)], [list(b), list(a)]
+        cur = links.setdefault(kind, [])
+        if body.get("remove"):
+            links[kind] = [x for x in cur if x != pair and x != revp]
+        elif pair not in cur and revp not in cur:
+            cur.append(pair)
+    _cluster_links_path(date).write_text(json.dumps(links), encoding="utf-8")
+    return {"ok": True, "kind": kind}
+
+
+@router.post("/reid/cluster-reset")
+def reid_cluster_reset(body: dict) -> dict:
+    """Reset ALL human Cluster-tab decisions (merges + groups + moves) for a date back to empty. Scoped to the
+    Cluster page only — does NOT touch the model, the gallery, footfall, or any other HITL labels."""
+    date = body.get("date", "")
+    if not date or "/" in date or "\\" in date or ".." in date:
+        raise HTTPException(400, "bad date")
+    _cluster_links_path(date).write_text(json.dumps({"merge": [], "group": [], "move": {}}), encoding="utf-8")
+    return {"ok": True, "reset": date}
 
 
 def _parse_xcam(s: str):
