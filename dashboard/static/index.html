@@ -35,6 +35,10 @@
   .top h1{margin:0;font-size:18px;font-weight:700}
   .top .sub{color:var(--mut);font-size:12.5px}
   .top .right{margin-left:auto;display:flex;gap:9px;align-items:center}
+  /* SPA tabs get the whole viewport: no portal title bar, no side padding, iframe fills the screen */
+  #view iframe.spa{display:block;width:100%;height:100vh;border:0;background:var(--surface)}
+  body.spa-full .top{display:none}
+  body.spa-full .main{padding:0}
   .pill{display:inline-flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--line);
     border-radius:999px;padding:5px 11px;font-weight:600;font-size:12.5px}
   .pill .dot{width:8px;height:8px;border-radius:50%}
@@ -114,10 +118,15 @@
   <aside class="side">
     <div class="brand"><div class="logo"></div><div><b>Vision Console</b><span>BlueStone Showroom</span></div></div>
     <nav class="nav" id="nav">
-      <a href="#overview" data-v="overview" class="active"><span class="ic">▦</span> Overview</a>
-      <a href="#review" data-v="review"><span class="ic">✓</span> Review <span id="navq"></span></a>
-      <a href="#pipeline" data-v="pipeline"><span class="ic">⚙</span> Pipeline</a>
-      <a href="#training" data-v="training"><span class="ic">◴</span> Training</a>
+      <a href="#review" data-v="review" class="active"><span class="ic">📋</span> Review <span id="navq"></span></a>
+      <a href="#queue" data-v="queue"><span class="ic">🎯</span> Queue</a>
+      <a href="#report" data-v="report"><span class="ic">📊</span> Report</a>
+      <a href="#train" data-v="train"><span class="ic">🧠</span> Training</a>
+      <a href="#reid" data-v="reid"><span class="ic">🪪</span> ReID</a>
+      <a href="#cluster" data-v="cluster"><span class="ic">🧬</span> Cluster</a>
+      <a href="#logs" data-v="logs"><span class="ic">📈</span> Logs</a>
+      <a href="#staff" data-v="staff"><span class="ic">👥</span> Staff</a>
+      <a href="#compare" data-v="compare"><span class="ic">🔬</span> Pure</a>
       <a href="#sources" data-v="sources"><span class="ic">⛁</span> Sources</a>
     </nav>
     <div class="foot">Batch · next-morning review<br>human-in-the-loop</div>
@@ -164,29 +173,34 @@ function topbar(){
   $('score').textContent=S.score+'%';
   $('dot').style.background=S.score>=95?'var(--good)':S.score>=50?'var(--warn)':'var(--bad)';
   $('navq').innerHTML='';   // real /review owns its own counts
-  const _rt=document.querySelector('.top .right'); if(_rt) _rt.style.display=(VIEW==='review')?'none':'flex';   // synthetic model/accuracy/Reset pills are noise on the real Review
-  const titles={overview:['Overview','Day report — customers & employees'],review:['Showroom Review','Customers, staff & reconciliation'],
-    pipeline:['Pipeline','Tune model parameters at each step'],training:['Training','Schedule, controls & model registry'],
-    sources:['Sources','Connect the showroom NVR & cameras']};
-  $('ptitle').textContent=titles[VIEW][0]; $('psub').textContent=titles[VIEW][1];
+  const _rt=document.querySelector('.top .right'); if(_rt) _rt.style.display=(VIEW==='sources')?'flex':'none';   // every SPA tab owns its own header; the synthetic pills only make sense on Sources
+  const titles={review:['Showroom Review','Customers, staff & reconciliation'],queue:['Review Queue','Every uncertain call, ranked'],
+    report:['Report','Day report — customers & employees'],train:['Training','Schedule, controls & model registry'],
+    reid:['ReID','Identity albums & training'],cluster:['Cluster','PID clustering workbench'],logs:['Logs','Training impact & history'],
+    staff:['Staff','Employee roster & floor-visits'],compare:['Pure','A/B parallel-day compare'],sources:['Sources','Connect the showroom NVR & cameras']};
+  const _t=titles[VIEW]||['Showroom','']; $('ptitle').textContent=_t[0]; $('psub').textContent=_t[1];
   document.querySelectorAll('#nav a').forEach(a=>a.classList.toggle('active',a.dataset.v===VIEW));
 }
-function go(v){ location.hash=v; }   // navigation = set the hash; routeFromHash does the work (so /#review survives refresh + is shareable)
+function go(v){ location.hash=v; }   // navigation = set the hash; routeFromHash does the work (so /#cluster survives refresh + is shareable)
+const SPA_TABS=['review','queue','report','train','reid','cluster','logs','staff','compare'];   // the embedded Review SPA's own tabs, promoted to the left pane
 function routeFromHash(){
   let v=(location.hash||'').replace('#','');
-  if(!['overview','review','pipeline','training','sources'].includes(v)) v='overview';
   if(v==='sources') return openSources();
+  if(!SPA_TABS.includes(v)) v='review';   // default landing = Review (Overview/Pipeline retired from the nav)
   VIEW=v; render();
 }
 async function openSources(){ SRC=await api('/api/sources'); VIEW='sources'; render(); }
 
 function render(){
   topbar();
-  if(VIEW==='overview') return renderOverview();
-  if(VIEW==='review') return renderReview();
-  if(VIEW==='pipeline') return renderPipeline();
-  if(VIEW==='training') return renderTraining();
+  document.body.classList.toggle('spa-full', VIEW!=='sources');   // SPA tabs use the whole viewport; Sources keeps the portal chrome
   if(VIEW==='sources') return renderSources();
+  return renderSpa(VIEW);                    // every left-pane tab = the embedded Review app, opened on that tab
+}
+function renderSpa(tab){
+  const ifr=$('view').querySelector('iframe.spa');
+  try{ if(ifr && ifr.contentWindow && ifr.contentWindow.showTab){ ifr.contentWindow.showTab(tab); return; } }catch(e){}   // already loaded -> just switch tab, no reload
+  $('view').innerHTML = '<iframe class="spa" src="/'+tab+'?embed=1" title="Showroom"></iframe>';
 }
 
 function renderOverview(){

@@ -16,9 +16,11 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from dashboard.hitl_api import router as hitl_router
+from dashboard.sso import install_sso
 
 STATIC = pathlib.Path(__file__).parent / "static"
 app = FastAPI(title="BlueStone Showroom — Live Results")
+install_sso(app)                # YantrAI store SSO gate + iframe headers (no-op unless YANTRAI_SSO=1)
 app.include_router(hitl_router)
 
 

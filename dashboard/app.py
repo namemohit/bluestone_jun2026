@@ -308,13 +308,17 @@ state = DashboardState()
 # Real-footage HITL console (visits from actual L1/L4 on real clips) lives alongside the
 # original synthetic dashboard. Browse it at /review.
 from dashboard.hitl_api import router as hitl_router  # noqa: E402
+from dashboard.sso import install_sso  # noqa: E402
 
+install_sso(app)                # YantrAI store SSO gate (no-op for local dev: needs YANTRAI_SSO=1 + key)
 app.include_router(hitl_router)
 
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return (STATIC / "index.html").read_text(encoding="utf-8")
+    # no-store so portal (left-nav / layout) edits always take — otherwise the browser serves a stale shell
+    return HTMLResponse((STATIC / "index.html").read_text(encoding="utf-8"),
+                        headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"})
 
 
 @app.get("/review", response_class=HTMLResponse)
@@ -322,6 +326,12 @@ def index():
 @app.get("/reports", response_class=HTMLResponse)
 @app.get("/train", response_class=HTMLResponse)
 @app.get("/training", response_class=HTMLResponse)
+@app.get("/queue", response_class=HTMLResponse)
+@app.get("/reid", response_class=HTMLResponse)
+@app.get("/cluster", response_class=HTMLResponse)
+@app.get("/logs", response_class=HTMLResponse)
+@app.get("/staff", response_class=HTMLResponse)
+@app.get("/compare", response_class=HTMLResponse)
 def review_page(embed: str = ""):
     """The review SPA — served ONLY inside the Vision Portal. The portal embeds it as an <iframe
     src="/review?embed=1">, so there is ONE front door. A direct hit on a bare review/report/train
