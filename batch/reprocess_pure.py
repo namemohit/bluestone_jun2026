@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import os
 import re
 import subprocess
 import sys
@@ -39,6 +40,11 @@ def main() -> None:
     ap.add_argument("--tag", default="pure", help="parallel namespace suffix -> <date>-<tag>_<HHMM>")
     ap.add_argument("--register-only", action="store_true",
                     help="skip L4; just register existing pure windows in the store so the dropdown lists them")
+    ap.add_argument("--count-cam", default=None,
+                    help="count crossings on this camera instead of the C05 door (e.g. C11 -> 'Variant C'). "
+                         "Promotes that window's L1_<cam> dir into the door slot; needs --count-config.")
+    ap.add_argument("--count-config", default=None,
+                    help="zones config (entry_line/inside) for --count-cam, e.g. configs/c11_zones.json")
     args = ap.parse_args()
 
     wins = src_windows(args.date)
@@ -87,16 +93,42 @@ def main() -> None:
         pdir.mkdir(parents=True, exist_ok=True)
         src_cfg = json.loads((OUTPUTS / w / "window.json").read_text(encoding="utf-8"))
 
-        pcfg = dict(src_cfg)                                   # reuse the ORIGINAL L1 dirs (abs paths) + zones + label
+        # default: count at the original C05 door. --count-cam swaps the counting camera (Variant C):
+        # promote that window's L1_<cam> dir into the door slot, the rest stay interior, point the
+        # frame/clip overlay (hitl_api hardcodes entry.ts) at the real <cam>.ts.
+        door_l1, door_cfg = src_cfg["l1"], src_cfg["config"]
+        interior = list(src_cfg.get("interior") or [])
+        if args.count_cam:
+            cam = args.count_cam.upper()
+            promoted = next((d for d in interior if Path(d).name == f"L1_{cam}"), None)
+            if promoted is None:
+                print(f"[pure]   SKIP {w}: no L1_{cam} interior dir to count on"); continue
+            door_l1 = promoted
+            door_cfg = args.count_config or src_cfg["config"]
+            interior = [d for d in interior if d != promoted]    # the rest stay interior (e.g. C14)
+            (pdir / "slices").mkdir(exist_ok=True)
+            real_ts, link = OUTPUTS / w / "slices" / f"{cam}.ts", pdir / "slices" / "entry.ts"
+            if real_ts.exists() and not link.exists():
+                try:
+                    os.link(real_ts, link)                       # hardlink (same volume, no admin needed)
+                except Exception:
+                    try:
+                        link.symlink_to(real_ts.resolve())
+                    except Exception as e:
+                        print(f"[pure]   (frame slice link skipped: {type(e).__name__})")
+
+        pcfg = dict(src_cfg)                                   # reuse zones + label; swap door/interior for the variant
+        pcfg["l1"], pcfg["config"], pcfg["interior"] = door_l1, door_cfg, interior
         pcfg["source_window"] = w                             # provenance: which reviewed window this mirrors
+        pcfg["count_cam"] = (args.count_cam or "C05").upper()
         (pdir / "window.json").write_text(json.dumps(pcfg, indent=2), encoding="utf-8")
         (pdir / "feedback.json").write_text(json.dumps(EMPTY_FB, indent=2), encoding="utf-8")
 
         cmd = [sys.executable, "-m", "stack.l4_visits",
-               "--l1", src_cfg["l1"], "--config", src_cfg["config"],
+               "--l1", door_l1, "--config", door_cfg,
                "--out", str(pdir), "--feedback", str(pdir / "feedback.json")]
-        if src_cfg.get("interior"):
-            cmd += ["--interior", *src_cfg["interior"]]
+        if interior:
+            cmd += ["--interior", *interior]
             if gal:
                 galp = pdir / "gallery.json"
                 galp.write_text(json.dumps(gal), encoding="utf-8")
@@ -105,7 +137,7 @@ def main() -> None:
                                   ("--staff-margin", "staff_margin")):
                     if thr.get(key):
                         cmd += [flag, str(thr[key])]
-        print(f"[pure] {pure}  <- L1 {src_cfg['l1']}", flush=True)
+        print(f"[pure] {pure}  <- L1 {door_l1}  (count_cam={pcfg['count_cam']})", flush=True)
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:
             print(f"[pure]   FAIL: {r.stderr[-300:]}", flush=True)

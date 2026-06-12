@@ -1,0 +1,10 @@
+{
+  "camera": "C11",
+  "role": "entry",
+  "_note": "EXPERIMENT (Variant C): counting line on the C11 INTERIOR camera, open-floor placement (user-drawn). inside='right' => store side = +1 = IN (verified: C11 'in' temporally matched C05 'in' 52/63). No street_mask (the line sits on the open floor, far from the through-glass street; measured street noise ~0). KNOWN behaviour: this OVER-counts vs the C05 door (~80 vs true 63 — floor circulation between counters trips the line) and is BLIND to the entrance corridor (never catches the 542-type entries). Comparison artifact only — counting belongs at C05; C11's strength is identity/dwell.",
+  "entry_line": [[0.596, 0.585], [0.690, 0.990]],
+  "inside": "right",
+  "street_drop_frac": 0.5,
+  "dedup_window_s": 18,
+  "min_bbox_h": 0.0
+}

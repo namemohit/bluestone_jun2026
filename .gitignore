@@ -31,6 +31,13 @@ configs/supabase.json
 configs/*.local.yaml
 cloud/dashboard.env.yaml
 
+# One-off scratch / debug (root-level only — must NOT match package __init__.py)
+/_*.py
+/_*.json
+_xcheck/
+*audit_err*
+*audit_out*
+
 # OS / editor
 .DS_Store
 Thumbs.db
