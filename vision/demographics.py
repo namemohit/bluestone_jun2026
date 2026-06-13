@@ -80,7 +80,9 @@ class InsightFaceEstimator(DemographicsEstimator):
             self._app = app
         return self._app
 
-    def estimate(self, crop) -> dict:
+    def estimate(self, crop, with_emb: bool = False) -> dict:
+        # with_emb=True also returns the 512-d ArcFace face embedding (`face_emb`) + its det confidence
+        # (`face_score`) — for face-ReID. Default off so demographics caching stays small.
         none = {"gender": "unknown", "gender_conf": 0.0, "age": None,
                 "age_bucket": "unknown", "age_conf": 0.0, "face": False}
         img = crop
@@ -101,8 +103,16 @@ class InsightFaceEstimator(DemographicsEstimator):
         sex = getattr(f, "sex", None)
         gender = "male" if sex == "M" else "female" if sex == "F" else "unknown"
         conf = round(float(getattr(f, "det_score", 0.0)), 3)
-        return {"gender": gender, "gender_conf": conf, "age": age,
-                "age_bucket": age_bucket(age), "age_conf": conf, "face": True}
+        out = {"gender": gender, "gender_conf": conf, "age": age,
+               "age_bucket": age_bucket(age), "age_conf": conf, "face": True}
+        if with_emb:
+            emb = getattr(f, "embedding", None)
+            if emb is not None:
+                import numpy as _np
+                v = _np.asarray(emb, dtype="float32"); n = float(_np.linalg.norm(v))
+                out["face_emb"] = (v / n if n > 0 else v).round(5).tolist()   # L2-normalized ArcFace
+                out["face_score"] = conf
+        return out
 
 
 def aggregate(estimates) -> dict:

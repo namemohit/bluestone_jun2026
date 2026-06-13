@@ -619,6 +619,18 @@ class SupabaseStore:
                         (store_id, limit))
             return [dict(r) for r in cur.fetchall()]
 
+    def published_provenance(self, store_id: str = "s14", limit: int = 60) -> list[dict]:
+        """Per-publish ReID/HITL provenance (the Report Summary trend): how many matches body-ReID + face-ReID
+        proposed, how many the human inverted, and the pure-HITL merges — @ the thresholds used, newest first."""
+        with self._cx() as cx, cx.cursor() as cur:
+            cur.execute("select id, period, scope, "
+                        "to_char(published_at at time zone 'Asia/Kolkata','YYYY-MM-DD HH24:MI') published_at, "
+                        "report->>'report_name' report_name, report->'provenance' provenance, "
+                        "(report->'customers'->>'unique_customers')::int customers "
+                        "from published_reports where store_id=%s order by published_at desc limit %s",
+                        (store_id, limit))
+            return [dict(r) for r in cur.fetchall()]
+
     def get_published(self, period: str, scope: str = "day", store_id: str = "s14") -> dict | None:
         with self._cx() as cx, cx.cursor() as cur:
             cur.execute("select report, model_version, "

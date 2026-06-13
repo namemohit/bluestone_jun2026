@@ -45,7 +45,16 @@ def main() -> None:
                          "Promotes that window's L1_<cam> dir into the door slot; needs --count-config.")
     ap.add_argument("--count-config", default=None,
                     help="zones config (entry_line/inside) for --count-cam, e.g. configs/c11_zones.json")
+    ap.add_argument("--no-interior", action="store_true",
+                    help="drop ALL interior cameras -> the --count-cam camera is the SOLE camera (e.g. C11-only "
+                         "'Variant D'): cards contain only that camera's crops, nothing to bridge.")
+    ap.add_argument("--person-source", default="l4_visits", choices=["l4_visits", "l2_crossings"],
+                    help="l2_crossings (with --count-cam C11 --no-interior): SKIP L4 in/out pairing; each C11 "
+                         "line-crossing tracklet becomes one person in the 'L2 basket'. The Builder + human dedup "
+                         "and reconcile in/out. Writes crossings.json instead of running stack.l4_visits.")
     args = ap.parse_args()
+    if args.person_source == "l2_crossings" and not (args.count_cam and args.no_interior):
+        sys.exit("[pure] --person-source l2_crossings requires --count-cam C11 --no-interior")
 
     wins = src_windows(args.date)
     if not wins:
@@ -106,6 +115,8 @@ def main() -> None:
             door_l1 = promoted
             door_cfg = args.count_config or src_cfg["config"]
             interior = [d for d in interior if d != promoted]    # the rest stay interior (e.g. C14)
+            if args.no_interior:
+                interior = []                                    # Variant D: <cam> is the SOLE camera, no bridging
             (pdir / "slices").mkdir(exist_ok=True)
             real_ts, link = OUTPUTS / w / "slices" / f"{cam}.ts", pdir / "slices" / "entry.ts"
             if real_ts.exists() and not link.exists():
@@ -121,8 +132,30 @@ def main() -> None:
         pcfg["l1"], pcfg["config"], pcfg["interior"] = door_l1, door_cfg, interior
         pcfg["source_window"] = w                             # provenance: which reviewed window this mirrors
         pcfg["count_cam"] = (args.count_cam or "C05").upper()
+        pcfg["person_source"] = args.person_source           # l4_visits | l2_crossings (the dashboard gates on this)
         (pdir / "window.json").write_text(json.dumps(pcfg, indent=2), encoding="utf-8")
         (pdir / "feedback.json").write_text(json.dumps(EMPTY_FB, indent=2), encoding="utf-8")
+
+        if args.person_source == "l2_crossings":
+            # NO L4: each C11 line-crossing tracklet = one person. Pure geometry over the promoted L1_C11 tracks.
+            try:
+                from stack.l2_entries import crossings_from_tracks
+                tracks = json.loads((Path(door_l1) / "tracks.json").read_text(encoding="utf-8")).get("tracks", [])
+                cfg = json.loads(Path(door_cfg).read_text(encoding="utf-8"))
+                xs = crossings_from_tracks(tracks, cfg)
+            except Exception as e:
+                print(f"[pure]   FAIL crossings {pure}: {type(e).__name__}: {e}", flush=True); continue
+            (pdir / "crossings.json").write_text(json.dumps({"crossings": xs}), encoding="utf-8")
+            n_in = sum(1 for x in xs if x.get("in_ts") is not None)
+            print(f"[pure] {pure}  <- L2 crossings on {door_l1}: {len(xs)} tracklets ({n_in} IN)", flush=True)
+            if st is not None:                               # list it in the dropdown (window row only; cards read from disk)
+                try:
+                    start = f"{args.date} {hhmm[:2]}:{hhmm[2:]}:00"
+                    st.push_window(pure, "s14", {"visits": [], "window_start_ist": start}, with_detections=False)
+                except Exception as e:
+                    print(f"[pure]   register WARN {pure}: {type(e).__name__}: {e}")
+            ok += 1
+            continue
 
         cmd = [sys.executable, "-m", "stack.l4_visits",
                "--l1", door_l1, "--config", door_cfg,

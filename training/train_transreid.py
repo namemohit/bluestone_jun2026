@@ -102,10 +102,45 @@ def main() -> None:
                     help="train the last N used backbone blocks too (0 = head-only)")
     ap.add_argument("--sie", action="store_true", help="use SIE cam0 (default off: better off-the-shelf)")
     ap.add_argument("--out", default="outputs/models")
+    ap.add_argument("--pairs", default="", help="JSONL of HUMAN-marked pairs {crop_a,crop_b,verdict} mixed in as supervision")
+    ap.add_argument("--human-frac", type=float, default=0.35, help="fraction of each batch drawn from human pairs (when --pairs given)")
+    ap.add_argument("--job", default="", help="job status file to write progress to (for the dashboard)")
     args = ap.parse_args()
     use_sie = args.sie
     n_frozen = max(0, N_USED - args.unfreeze)
     rng = random.Random(0)
+
+    jobf = Path(args.job) if args.job else None
+    def _job(**kw):
+        if not jobf:
+            return
+        try:
+            cur = json.loads(jobf.read_text(encoding="utf-8")) if jobf.exists() else {}
+        except Exception:
+            cur = {}
+        cur.update(kw)
+        jobf.parent.mkdir(parents=True, exist_ok=True)
+        jobf.write_text(json.dumps(cur), encoding="utf-8")
+    _job(status="running", stage="loading data")
+
+    # HUMAN pairs (active-learning marks) — folded into the self-supervised loss as gold supervision.
+    human_pos, human_neg = [], []
+    if args.pairs and Path(args.pairs).exists():
+        for ln in Path(args.pairs).read_text(encoding="utf-8").splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                r = json.loads(ln)
+            except Exception:
+                continue
+            a, b, v = r.get("crop_a"), r.get("crop_b"), r.get("verdict")
+            if not a or not b or v not in ("same", "different"):
+                continue
+            (human_pos if v == "same" else human_neg).append((a, b))
+        print(f"[transreid] human pairs: {len(human_pos)} same / {len(human_neg)} different "
+              f"(mixed in at {args.human_frac:.0%})", flush=True)
+    has_human = bool(human_pos or human_neg)
 
     man = [json.loads(l) for l in (Path(args.data) / "manifest.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
     train = [t for t in man if t["split"] == "train" and len(t["crops"]) >= 2]
@@ -145,6 +180,13 @@ def main() -> None:
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
 
     def sample_pair(positive):
+        # with probability human_frac, draw a GOLD human-marked pair instead of a self-supervised one
+        if has_human and rng.random() < args.human_frac:
+            if positive and human_pos:
+                a, b = rng.choice(human_pos); return a, b, 1.0
+            if (not positive) and human_neg:
+                a, b = rng.choice(human_neg); return a, b, 0.0
+            # fall through to self-supervised if the requested polarity has no human pairs
         t = rng.choice(train)
         if positive:
             a, b = rng.sample(t["crops"], 2)
@@ -205,12 +247,24 @@ def main() -> None:
         if improved:
             best = {"sep": sep, "sm": sm, "dm": dm, "epoch": ep + 1}
             save_ckpt(best)
+        _job(status="running", stage=f"epoch {ep+1}/{args.epochs}",
+             epoch=ep + 1, epochs=args.epochs, sep=round(sep, 4), best_sep=round(best["sep"], 4))
 
     if best["epoch"] == 0:
         print("[transreid] WARNING: VAL never improved over baseline", flush=True)
         best.update({"sm": sm, "dm": dm, "epoch": args.epochs})
         save_ckpt(best)
     print(f"[transreid] BEST VAL sep {gap0:+.4f} -> {best['sep']:+.4f} @epoch {best['epoch']}  saved -> {wp}", flush=True)
+    _job(status="done", stage="finished", checkpoint=str(wp), epochs=args.epochs,
+         before_sep=round(gap0, 4), best_sep=round(best["sep"], 4), best_epoch=best["epoch"],
+         human_same=len(human_pos), human_diff=len(human_neg))
+    if jobf:                                   # append to the run HISTORY the dashboard's "past training" section reads
+        hist = jobf.parent / "c11_history.jsonl"
+        with hist.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": time.strftime("%Y-%m-%d %H:%M"), "checkpoint": wp.name,
+                                "epochs": args.epochs, "before_sep": round(gap0, 4),
+                                "best_sep": round(best["sep"], 4), "best_epoch": best["epoch"],
+                                "human_same": len(human_pos), "human_diff": len(human_neg)}) + "\n")
 
 
 if __name__ == "__main__":

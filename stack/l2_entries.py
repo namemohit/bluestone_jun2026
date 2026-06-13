@@ -43,6 +43,51 @@ def point_in_poly(x, y, poly) -> bool:
     return inside
 
 
+def crossings_from_tracks(tracks: list, cfg: dict) -> list:
+    """BOTH-direction C11 line crossings, ONE entry per TRACK that crossed (the 'L2 basket' person unit).
+
+    Pure geometry (same vision.geometry the pipeline's L2/L4 use). For each track that crosses the entry line we
+    record the IN and/or OUT crossing timestamps PLUS its earliest/latest appearance (the appearance fallback when
+    a clean crossing/direction is missing). No time-window dedup — every genuine crossing tracklet shows; the
+    Builder + human dedup duplicates downstream. Returns:
+      [{track, first_ts, last_ts, first_ist, last_ist, in_ts, out_ts, crop, conf}]  (in_ts/out_ts = None if absent)
+    `first_ist`/`last_ist` copied from the track if present (display ordering); ts values are raw traj timestamps
+    (same clock as build_c11_tracklets.start_epoch, so they grab frames from slices/C11.ts directly)."""
+    p1, p2 = tuple(cfg["entry_line"][0]), tuple(cfg["entry_line"][1])
+    inside_sign = inside_sign_from_label(cfg.get("inside", "right"))
+    street = cfg.get("street_mask", [])
+    sfrac = cfg.get("street_drop_frac", 0.5)
+    min_h = cfg.get("min_bbox_h", 0.0)
+    out = []
+    for t in tracks:
+        traj = t.get("traj", [])
+        if not traj:
+            continue
+        if street and sum(point_in_poly(x, y, street) for _, x, y, _ in traj) / len(traj) > sfrac:
+            continue                                            # mostly through-glass street -> noise
+        if min_h > 0 and max((p[3] for p in traj), default=0.0) < min_h:
+            continue
+        in_ts = out_ts = None
+        prev = prev_sign = None
+        for ts, x, y, h in traj:
+            cur = side(p1, p2, (x, y))
+            if (prev is not None and prev_sign not in (None, 0) and cur != 0
+                    and cur != prev_sign and segments_intersect(prev, (x, y), p1, p2)):
+                if cur == inside_sign and in_ts is None:
+                    in_ts = ts
+                elif cur != inside_sign and out_ts is None:
+                    out_ts = ts
+            if cur != 0:
+                prev_sign = cur
+            prev = (x, y)
+        if in_ts is None and out_ts is None:
+            continue                                            # never crossed -> not a person in the L2 basket
+        out.append({"track": t["track"], "first_ts": traj[0][0], "last_ts": traj[-1][0],
+                    "first_ist": t.get("first_ist"), "last_ist": t.get("last_ist"),
+                    "in_ts": in_ts, "out_ts": out_ts, "crop": t.get("crop"), "conf": t.get("peak_conf")})
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="L2: filter L1 tracks -> real entries/exits")
     ap.add_argument("--l1", default="outputs/L1_3min", help="L1 output dir (with tracks.json)")

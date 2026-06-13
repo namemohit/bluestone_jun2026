@@ -115,17 +115,38 @@ def main() -> None:
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--date", default="2026-06-03-c")
     ap.add_argument("--views", type=int, default=4)
+    ap.add_argument("--out", default="outputs/transreid_card_reps.pkl",
+                    help="where to write the per-card reps (per-checkpoint files let the Builder switch models)")
+    ap.add_argument("--job", default="", help="JSON status file the dashboard polls")
     args = ap.parse_args()
+
+    jp = Path(args.job) if args.job else None
+
+    def _job(**kw):
+        if not jp:
+            return
+        try:
+            cur = json.loads(jp.read_text(encoding="utf-8")) if jp.exists() else {}
+        except Exception:
+            cur = {}
+        cur.update(kw)
+        jp.parent.mkdir(parents=True, exist_ok=True)
+        jp.write_text(json.dumps(cur), encoding="utf-8")
+
+    _job(status="running", stage="loading model")
     ckpt = sorted(glob.glob(args.ckpt))[-1] if "*" in args.ckpt else args.ckpt
     model, use_sie = transreid.load_finetuned(ckpt)
     print(f"checkpoint: {ckpt}  (SIE={'on' if use_sie else 'off'})", flush=True)
 
     H._STATE_VERSION += 1
+    _job(status="running", stage="embedding cards")
     allc = H._cards_from_dets(args.date)
     cust, staff = allc["customer_cards"], allc["staff_cards"]
     reps = card_reps(cust + staff, model, use_sie, args.views)
-    pickle.dump(reps, open("outputs/transreid_card_reps.pkl", "wb"))
-    print(f"saved {len(reps)}/{len(cust)+len(staff)} card reps -> outputs/transreid_card_reps.pkl", flush=True)
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    pickle.dump(reps, open(args.out, "wb"))
+    print(f"saved {len(reps)}/{len(cust)+len(staff)} card reps -> {args.out}", flush=True)
+    _job(status="done", stage="finished", reps=len(reps), cards=len(cust) + len(staff), out=args.out)
 
     # customer-only sweep (the hard case where OSNet collapsed)
     cust_reps = {k: v for k, v in reps.items()
